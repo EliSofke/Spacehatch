@@ -75,3 +75,21 @@
   logs its start line; integration suite still green.
 - To adopt: push v0.2.3, then delete the current codespace and relaunch so
   the fresh codespace uses the hardened devcontainer lifecycle scripts.
+
+## v0.3.0 — no-token-entry variant (OAuth + PKCE + exchange function)
+- Question: can we skip token entry if the user is already signed in to GitHub?
+- Verified current GitHub behavior (grounded, not assumed): PKCE is supported
+  since 2025-07, but the token endpoint still has NO CORS and still requires
+  the client_secret — confirmed by GitHub staff. And a github.com session does
+  not authenticate api.github.com from a third-party origin. So a fully
+  backend-free, tokenless flow is impossible today.
+- Decision: minimal token-mediating function (BFF-lite). auth-worker/ does the
+  one hop the browser cannot (code→token with secret+PKCE) and nothing else;
+  stateless, ~90 LOC, Cloudflare-default and portable.
+- frontend-oauth/: sign-in replaces the PAT field; silent redirect for already-
+  authorized users; token in tab memory only; launch/auto-open reused verbatim.
+- Tests: worker differential suite (preflight, origin guard, bad input, valid
+  exchange, secret-never-leaks, upstream-error passthrough, 404) — 9/9 green;
+  PKCE S256 verified against the RFC 7636 reference vector.
+- Pages still deploys frontend-pure by default (works standalone); switching to
+  frontend-oauth requires the worker + clientId/authWorkerUrl to be set first.

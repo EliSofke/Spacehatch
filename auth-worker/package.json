@@ -1,0 +1,10 @@
+{
+  "name": "spacehatch-auth-worker",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "Stateless GitHub OAuth token-exchange endpoint so the Spacehatch frontend can skip manual token entry.",
+  "scripts": {
+    "test": "node worker.test.mjs"
+  }
+}

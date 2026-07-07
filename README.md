@@ -44,9 +44,10 @@ Browser ── xterm.js + AttachAddon ── WebSocket ──┐
 └── README.md
 ```
 
-Two variants live side by side. **Variant A** (backend service) is described
-above; **Variant B** (pure browser, no backend at all) is described in
-[its own section below](#variant-b--pure-browser-no-backend).
+Three variants live side by side. **Variant A** (backend service) is described
+above; **Variant B** (pure browser, no backend, PAT entry) and **Variant C**
+(static + minimal OAuth exchange function, no token entry) are described in
+their own sections below.
 
 ## Prerequisites
 
@@ -244,3 +245,61 @@ Browser ── https + WebSocket ──► <codespace>-7681.app.github.dev
 4. **No server-side rate limit.** The cooldown lives in the page and can be
    bypassed; the hard backstop is the user's own Codespaces quota and
    GitHub's API rate limits.
+
+---
+
+## Variant C — no token entry (OAuth + PKCE + minimal exchange function)
+
+Variant B works with zero backend but asks the user to paste a personal access
+token. Variant C removes that step. It cannot be fully backend-free: GitHub's
+OAuth token endpoint has no CORS and still requires the `client_secret`, so the
+code→token exchange cannot run in the browser even with PKCE. The only extra
+piece is one tiny, stateless function that does exactly that exchange.
+
+```
+Browser ── authorize (top-level redirect, silent if already authorized) ─► github.com
+Browser ── POST {code, verifier} ─► auth-worker  ── code→token (holds secret) ─► github.com
+Browser ── fetch (Bearer token) ─► api.github.com     (create / poll / stop)
+Browser ── https ─► <codespace>-7681.app.github.dev   (in-codespace bridge)
+```
+
+### Pieces
+
+- `auth-worker/` — a ~90-line `export default { fetch }` handler (Cloudflare
+  Workers by default, portable to Vercel/Netlify/Node). Holds the client
+  secret, exchanges `{ code, code_verifier }` for an access token, returns only
+  the token. See `auth-worker/README.md`.
+- `frontend-oauth/` — the landing page with a "Sign in with GitHub" button
+  instead of a token field. Runs the authorization-code flow with PKCE; an
+  already-signed-in, previously-authorized user is redirected back silently.
+
+### Setup
+
+1. Register an OAuth App (or GitHub App). Callback URL = the Pages URL of
+   `frontend-oauth` (e.g. `https://elisofke.github.io/Spacehatch/`).
+2. Deploy the worker (`auth-worker/README.md`), setting `GITHUB_CLIENT_ID`,
+   `GITHUB_CLIENT_SECRET`, and `ALLOWED_ORIGIN` (your Pages origin).
+3. In `frontend-oauth/index.html`, set `clientId` and `authWorkerUrl`.
+4. Point Pages at `frontend-oauth/` instead of `frontend-pure/` (edit the
+   `path:` in `.github/workflows/pages.yml`), or host it anywhere static.
+
+### Variant matrix
+
+| | A: backend | B: pure browser | C: OAuth + exchange fn |
+|---|---|---|---|
+| Servers to operate | 1 (Node + gh CLI) | 0 | 1 tiny stateless function |
+| Sign-in | OAuth, token server-side | paste a PAT | one click, no token entry |
+| Token location | server memory | tab memory | tab memory |
+| Client secret | on the server | not used | in the exchange function only |
+| Best when | embedded terminal, full control | quickest to stand up | frictionless sign-in, minimal ops |
+
+### Variant-C security notes
+
+- The client secret lives only in the worker's secret store — never in the
+  repo or the browser.
+- PKCE binds the exchange to the browser session that started it, so an
+  intercepted authorization code alone cannot be redeemed.
+- The worker only accepts its configured `ALLOWED_ORIGIN` and returns only the
+  token; the token then lives solely in the tab's memory, like Variant B.
+- `state` is validated on return to block CSRF, and the code is stripped from
+  the URL immediately to prevent replay on reload.

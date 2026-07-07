@@ -12,3 +12,6 @@ backend/dist/
 
 # In-codespace bridge dependencies (installed by postCreateCommand)
 .devcontainer/terminal-bridge/node_modules/
+
+# Auth worker (no deps, but ignore if installed locally)
+auth-worker/node_modules/
