@@ -9,3 +9,6 @@ backend/dist/
 # Editor / OS noise
 .vscode/
 .DS_Store
+
+# In-codespace bridge dependencies (installed by postCreateCommand)
+.devcontainer/terminal-bridge/node_modules/

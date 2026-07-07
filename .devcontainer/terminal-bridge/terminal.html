@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cloud Terminal</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-attach@0.11.0/lib/addon-attach.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <style>
+    :root { --screen: #0a0e12; --seam: #26303a; --dim: #7d8b96; --phosphor: #f2a33c; }
+    html, body { margin: 0; height: 100%; background: var(--screen); }
+    body { display: flex; flex-direction: column; font-family: ui-monospace, Menlo, monospace; }
+    header {
+      display: flex; align-items: center; gap: 0.6rem;
+      padding: 0.45rem 0.8rem; border-bottom: 1px solid var(--seam);
+      color: var(--dim); font-size: 0.78rem;
+    }
+    .led { width: 8px; height: 8px; border-radius: 50%; background: var(--seam); }
+    .led.on { background: var(--phosphor); box-shadow: 0 0 6px var(--phosphor); }
+    #terminal { flex: 1; padding: 6px 2px 6px 8px; }
+    #terminal .xterm { height: 100%; }
+  </style>
+</head>
+<body>
+  <header><span class="led" id="led"></span><span id="title">connecting …</span></header>
+  <div id="terminal"></div>
+
+  <script>
+    "use strict";
+    // Same wire protocol as the landing-page variant: text = keystrokes,
+    // binary "\0CTL"+JSON = control, binary from server = shell output.
+    const CONTROL_MAGIC = new Uint8Array([0x00, 0x43, 0x54, 0x4c]);
+
+    const term = new Terminal({
+      cursorBlink: true,
+      fontSize: 14,
+      theme: { background: "#0a0e12", foreground: "#dfe6ea", cursor: "#f2a33c" },
+    });
+    const fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(document.getElementById("terminal"));
+    fitAddon.fit();
+
+    // Optional shared secret arrives via the URL fragment (never sent to any
+    // server by the browser) and is forwarded only on the same-origin socket.
+    const secret = window.location.hash.slice(1);
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(
+      `${proto}//${window.location.host}/ws` +
+        `?cols=${term.cols}&rows=${term.rows}` +
+        (secret ? `&auth=${encodeURIComponent(secret)}` : ""),
+    );
+    ws.binaryType = "arraybuffer";
+
+    ws.addEventListener("open", () => {
+      term.loadAddon(new AttachAddon.AttachAddon(ws, { bidirectional: true }));
+      term.focus();
+      document.getElementById("led").classList.add("on");
+      document.getElementById("title").textContent = window.location.hostname;
+      sendResize();
+    });
+    ws.addEventListener("close", (ev) => {
+      document.getElementById("led").classList.remove("on");
+      document.getElementById("title").textContent =
+        "disconnected" + (ev.reason ? ` — ${ev.reason}` : "");
+      term.write("\r\n\x1b[2m[connection closed]\x1b[0m\r\n");
+    });
+
+    function sendResize() {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      const payload = new TextEncoder().encode(
+        JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }),
+      );
+      const frame = new Uint8Array(CONTROL_MAGIC.length + payload.length);
+      frame.set(CONTROL_MAGIC, 0);
+      frame.set(payload, CONTROL_MAGIC.length);
+      ws.send(frame);
+    }
+    term.onResize(sendResize);
+    window.addEventListener("resize", () => fitAddon.fit());
+  </script>
+</body>
+</html>

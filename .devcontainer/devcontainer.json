@@ -4,8 +4,15 @@
   "features": {
     "ghcr.io/devcontainers/features/github-cli:1": {}
   },
-  "forwardPorts": [3000],
-  "postCreateCommand": "cd backend && npm ci",
+  "forwardPorts": [3000, 7681],
+  "portsAttributes": {
+    "7681": {
+      "label": "web terminal (keep PRIVATE)",
+      "onAutoForward": "silent"
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "postStartCommand": "bash .devcontainer/start-bridge.sh",
   "customizations": {
     "vscode": {
       "extensions": ["dbaeumer.vscode-eslint"]

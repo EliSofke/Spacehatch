@@ -31,8 +31,22 @@ Browser ── xterm.js + AttachAddon ── WebSocket ──┐
 │   ├── package.json
 │   ├── tsconfig.json
 │   └── .env.example
+├── frontend-pure/       Variant B: pure-browser landing page (GitHub Pages)
+│   ├── index.html
+│   └── app.js
+├── .devcontainer/
+│   ├── devcontainer.json    Ports 3000 + 7681, bridge autostart
+│   ├── setup.sh / start-bridge.sh
+│   └── terminal-bridge/     Variant B: in-codespace web terminal (ws + node-pty)
+│       ├── server.js
+│       ├── terminal.html
+│       └── test/bridge.test.js
 └── README.md
 ```
+
+Two variants live side by side. **Variant A** (backend service) is described
+above; **Variant B** (pure browser, no backend at all) is described in
+[its own section below](#variant-b--pure-browser-no-backend).
 
 ## Prerequisites
 
@@ -154,3 +168,79 @@ The backend serves the frontend statically, so opening
 | GET | `/api/codespaces/:name` | State polling |
 | DELETE | `/api/codespaces/:name` | Stop (`?purge=true` → delete) |
 | WS | `/ws/terminal?codespace=…&cols=…&rows=…` | Shell bridge |
+
+---
+
+## Variant B — pure browser, no backend
+
+Everything above assumed a Node.js bridge service. Variant B removes it
+entirely: a **static page** (hostable on GitHub Pages) plus a tiny
+**terminal server running inside the codespace itself**.
+
+```
+Browser ── fetch ──────────────► api.github.com   (create / poll / stop / delete)
+Browser ── https + WebSocket ──► <codespace>-7681.app.github.dev
+                                   └─ terminal-bridge (ws + node-pty) inside the codespace
+```
+
+### How it works
+
+1. `frontend-pure/index.html` asks for a **personal access token** with the
+   `codespace` scope (plus `repo` access for private repositories). The token
+   lives in tab memory only. A full OAuth flow is impossible without a server:
+   `api.github.com` is CORS-enabled, but the token-exchange endpoints on
+   `github.com/login/oauth/*` reject cross-origin requests by design.
+2. The page calls the documented REST API directly from the browser:
+   reuse → start → create, then polls until `Available`. The creation request
+   sets `idle_timeout_minutes`, which is the lifecycle safety net — with no
+   server of our own, GitHub's idle timeout stops forgotten machines.
+3. The devcontainer starts `.devcontainer/terminal-bridge/server.js` on port
+   **7681** (`postStartCommand`). It serves the xterm.js terminal page and a
+   WebSocket-attached PTY — same wire protocol as Variant A (text = input,
+   `\0CTL`+JSON = resize, binary = output).
+4. The port stays **private**. GitHub's port-forwarding auth wall (cookie
+   based, codespace creator only, 3 h expiry) guards both the page and the
+   WebSocket, because both share the same origin — this same-origin trick is
+   what makes the private port workable without any token handling.
+
+### Setup
+
+1. Edit the config block at the bottom of `frontend-pure/index.html`
+   (`owner`, `repo`, `ref`) — or pass `?owner=…&repo=…` as URL parameters.
+2. Enable GitHub Pages for the repository (Settings → Pages → Source:
+   GitHub Actions). The `pages.yml` workflow deploys `frontend-pure/` on
+   every push to `main`.
+3. Make sure the **target repository** contains `.devcontainer/` with the
+   `terminal-bridge/` folder and the two lifecycle scripts (copy them over
+   if the target repo is a different one).
+4. Open the Pages URL, paste a token, click **Launch**, then **Open terminal**.
+   Signing in once on `*.app.github.dev` is the private-port protection.
+
+### Trade-offs vs. Variant A
+
+| | A: backend service | B: pure browser |
+|---|---|---|
+| Servers to operate | 1 (Node + gh CLI) | 0 |
+| Auth | OAuth flow, token server-side | PAT pasted by the user |
+| Undocumented surface | `gh codespace ssh --stdio` transport | none (REST + documented port forwarding) |
+| Terminal embedding | inline on the landing page | separate tab on `app.github.dev` |
+| Rate limiting | server-side (express-rate-limit) | client-side guard + GitHub API limits only |
+| Idle handling | bridge stops the codespace actively | GitHub `idle_timeout_minutes` only |
+
+### Variant-B security assumptions and open risks
+
+1. **The token is only as safe as the page.** It stays in memory, but any XSS
+   on the landing page could read it. Keep the page dependency-free (it is)
+   and serve it from a trusted origin. A fine-grained token limited to the
+   one repository reduces the blast radius.
+2. **Port 7681 must never be made public.** The bridge performs no
+   authentication of its own beyond a same-origin check and an optional
+   `BRIDGE_SHARED_SECRET`; the security boundary is GitHub's private-port
+   auth wall. A public port would expose a shell to anyone with the URL.
+3. **Private-port behavior is product behavior, not an API contract.** The
+   cookie flow, the 3 h expiry, and the `app.github.dev` domain are
+   documented but may change; the domain is therefore configurable in the
+   page config.
+4. **No server-side rate limit.** The cooldown lives in the page and can be
+   bypassed; the hard backstop is the user's own Codespaces quota and
+   GitHub's API rate limits.

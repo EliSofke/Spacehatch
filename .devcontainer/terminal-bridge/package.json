@@ -1,0 +1,17 @@
+{
+  "name": "terminal-bridge",
+  "version": "0.2.0",
+  "private": true,
+  "description": "In-codespace web terminal: serves xterm.js UI and a WebSocket-attached PTY on a privately forwarded port.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "node-pty": "^1.0.0",
+    "ws": "^8.18.0"
+  }
+}
