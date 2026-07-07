@@ -1,6 +1,67 @@
 # Spacehatch
 
-One-click cloud terminal from a repo landing page. A visitor clicks one button on a static landing page and gets an interactive shell — rendered with xterm.js in the browser — inside a GitHub Codespace for a fixed repository. No VS Code UI, no local software. The Codespace runs on GitHub's infrastructure; the Spacehatch service only orchestrates and bridges.
+One-click cloud terminal from a repo landing page. A visitor clicks one button and gets an interactive shell — rendered with xterm.js in the browser — inside a GitHub Codespace for a fixed repository. No VS Code UI, no local software. The Codespace runs on GitHub's infrastructure; Spacehatch only orchestrates its lifecycle and bridges its shell to the browser.
+
+The same product ships in three variants that trade infrastructure for convenience. They share one terminal experience and one wire protocol; they differ only in how the user authenticates and where the terminal server runs. Pick one from the [comparison](#comparison) at the end.
+
+## Concept
+
+Every variant does the same four things: authenticate the user against GitHub, create or reuse a Codespace via the documented REST API, poll it until `Available`, and attach a live PTY to an xterm.js terminal in the browser.
+
+The one invariant across all variants is the **terminal wire protocol** (Ubiquitous Language — the same names appear in every frontend and every bridge):
+
+- Browser → server, **text** frames: raw keystrokes (emitted by xterm.js `AttachAddon`), written verbatim to the PTY.
+- Browser → server, **binary** frames prefixed with the 4-byte magic `\0CTL`: JSON control messages, currently `{ type: "resize", cols, rows }`.
+- Server → browser, **binary** frames: raw shell output (binary so multi-byte UTF-8 split across chunks reassembles correctly).
+
+What differs between variants is only two axes: **auth** (server-held OAuth token / pasted PAT / one-click OAuth+PKCE) and **terminal transport** (an `ssh2` bridge on a backend host / an in-codespace `node-pty` bridge on a private forwarded port).
+
+## Project structure
+
+```
+.
+├── backend/                  Variant A · Node/Express bridge service (TypeScript)
+│   ├── src/
+│   │   ├── server.ts             Express app, OAuth flow, REST endpoints, WS upgrade
+│   │   ├── config.ts             fail-fast environment configuration
+│   │   ├── sessions.ts           server-side token store + signed httpOnly cookie
+│   │   ├── githubApi.ts          documented REST calls (create/poll/start/stop/delete)
+│   │   └── ssh/
+│   │       ├── ghTransport.ts    ⚠ the ONLY undocumented-behavior module (gh tunnel)
+│   │       └── bridge.ts         WebSocket ⇄ SSH PTY bridge, resize, idle timeout
+│   ├── .env.example, package.json, tsconfig.json
+├── frontend/                 Variant A · landing page with an inline xterm.js terminal
+│
+├── frontend-pure/            Variant B · static page, PAT entry
+├── frontend-oauth/           Variant C · static page, GitHub sign-in (no token entry)
+├── auth-worker/              Variant C · stateless OAuth code→token exchange function
+│
+├── .devcontainer/            Variants B & C · in-codespace terminal bridge
+│   ├── devcontainer.json         forwards ports 3000 + 7681, autostarts the bridge
+│   ├── setup.sh, start-bridge.sh lifecycle scripts (install, detached start, health probe)
+│   └── terminal-bridge/          ws + node-pty server, its own terminal page, tests
+│
+├── .github/workflows/        ci.yml (build gate), pages.yml (deploy static frontend)
+├── scripts/bootstrap.sh      one-shot repo bootstrap (remote, push, .env seeding)
+├── docs/JOURNAL.md           decision log
+└── Dockerfile                Variant A runtime image (Node + gh CLI)
+```
+
+## Prerequisites (all variants)
+
+- A GitHub account with Codespaces enabled and access to the target repository.
+- The **target repository** must contain `.devcontainer/` (the in-codespace bridge) for Variants B and C. Variant A reaches any repo the token can see.
+- Node.js ≥ 18 (tested with 22) to build or run the JavaScript/TypeScript pieces.
+
+Each variant lists its own additional prerequisites in its Setup section.
+
+---
+
+## Variant A — backend service
+
+A Node.js/Express service authenticates the user, manages the Codespace, opens an SSH tunnel to it, and streams the shell over a WebSocket to an xterm.js terminal embedded directly in the landing page. The token never leaves the server.
+
+### Architecture
 
 ```
 Browser ── xterm.js + AttachAddon ── WebSocket ──┐
@@ -12,152 +73,38 @@ Browser ── xterm.js + AttachAddon ── WebSocket ──┐
                                                  GitHub Codespace (sshd)
 ```
 
-## Project structure
+### How it works
 
-```
-.
-├── frontend/            Static landing page (vanilla JS + xterm.js from CDN)
-│   ├── index.html
-│   └── app.js
-├── backend/
-│   ├── src/
-│   │   ├── server.ts        Express app, OAuth flow, REST endpoints, WS upgrade
-│   │   ├── config.ts        Environment configuration, fail-fast validation
-│   │   ├── sessions.ts      Server-side token store + signed httpOnly cookie
-│   │   ├── githubApi.ts     Documented REST calls (create/poll/start/stop/delete)
-│   │   └── ssh/
-│   │       ├── ghTransport.ts   ⚠ the ONLY undocumented-behavior module (gh tunnel)
-│   │       └── bridge.ts        WebSocket ⇄ SSH PTY bridge, resize protocol, idle timeout
-│   ├── package.json
-│   ├── tsconfig.json
-│   └── .env.example
-├── frontend-pure/       Variant B: pure-browser landing page (GitHub Pages)
-│   ├── index.html
-│   └── app.js
-├── .devcontainer/
-│   ├── devcontainer.json    Ports 3000 + 7681, bridge autostart
-│   ├── setup.sh / start-bridge.sh
-│   └── terminal-bridge/     Variant B: in-codespace web terminal (ws + node-pty)
-│       ├── server.js
-│       ├── terminal.html
-│       └── test/bridge.test.js
-└── README.md
-```
-
-Three variants live side by side. **Variant A** (backend service) is described
-above; **Variant B** (pure browser, no backend, PAT entry) and **Variant C**
-(static + minimal OAuth exchange function, no token entry) are described in
-their own sections below.
-
-## Prerequisites
-
-- Node.js ≥ 18 (tested with 22)
-- GitHub CLI `gh` ≥ 2.40 installed on the backend host and on `PATH`
-  (used **only** as the tunnel transport; it authenticates from the per-user
-  OAuth token via `GH_TOKEN`, no `gh auth login` needed)
-- A GitHub account with access to the target repository and Codespaces enabled
-
-## Setup
-
-### 1. Register a GitHub OAuth App
-
-GitHub → Settings → Developer settings → **OAuth Apps** → *New OAuth App*:
-
-- **Homepage URL:** `http://localhost:3000` (or your public base URL)
-- **Authorization callback URL:** `http://localhost:3000/auth/callback`
-  — must match `BASE_URL` + `/auth/callback` exactly.
-
-Copy the *Client ID* and generate a *Client secret*.
-
-Scopes are requested at runtime by the backend: `codespace` (full Codespaces
-lifecycle + tunnel access) and `repo` (required if the target repository is
-private; you can remove it from `server.ts` for public repos).
-
-### 2. Configure and run the backend
-
-```bash
-cd backend
-cp .env.example .env        # fill in client id/secret, owner/repo, session secret
-npm install
-npm run build
-npm start
-```
-
-The backend serves the frontend statically, so opening
-`http://localhost:3000` is all you need.
-
-### 3. Use it
-
-1. **Sign in with GitHub** → OAuth consent → back on the page.
-2. **Launch cloud terminal** → the page shows the Codespace state
-   (`Queued → Provisioning → Starting → Available`; a cold create takes
-   1–4 minutes, a restart ~30 s).
-3. The terminal attaches automatically. **Stop codespace** ends compute
-   billing; `DELETE /api/codespaces/:name?purge=true` removes the machine
-   entirely.
-
-## How each requirement is met
-
-| Requirement | Implementation |
+| Concern | Implementation |
 |---|---|
-| Create + start Codespace | `POST /repos/{owner}/{repo}/codespaces` (documented REST), reuse-or-start logic in `POST /api/codespaces` |
+| Create + start Codespace | `POST /repos/{owner}/{repo}/codespaces` (documented REST); reuse-or-start logic in `POST /api/codespaces` |
 | Poll until `Available` | Frontend polls `GET /api/codespaces/:name` (backed by `GET /user/codespaces/{name}`) every 2.5 s |
-| SSH, not VS Code Server API | `ssh2` client speaking real SSH over a raw byte tunnel provided by `gh codespace ssh --stdio` |
-| WebSocket bridging | `ws` server; text frames = keystrokes, binary frames = shell output; binary frames with magic `\0CTL` = JSON control (resize) |
+| SSH, not VS Code Server API | `ssh2` client speaking real SSH over a raw byte tunnel from `gh codespace ssh --stdio` |
+| WebSocket bridging | `ws` server; text = keystrokes, binary = shell output, binary `\0CTL`+JSON = resize |
 | xterm.js + AttachAddon | `frontend/app.js`, with FitAddon and out-of-band resize frames |
-| Token never in frontend | Token lives in an in-memory server session; browser holds only an HMAC-signed, httpOnly, SameSite=Lax cookie |
-| Rate limiting | `express-rate-limit`, 3 launches/min, plus reuse of an existing Codespace instead of creating duplicates |
-| Idle lifecycle | Bridge-level byte-flow timeout (`IDLE_TIMEOUT_MS`) stops the Codespace; GitHub-side `idle_timeout_minutes` as safety net if the backend dies |
-| Error handling | 401/403 from GitHub → session invalidated, frontend returns to login; gh tunnel death and SSH disconnects close the WS with a reason string shown in the terminal |
+| Token never in frontend | Token in an in-memory server session; browser holds only an HMAC-signed, httpOnly, SameSite=Lax cookie |
+| Rate limiting | `express-rate-limit`, 3 launches/min, plus reuse instead of creating duplicates |
+| Idle lifecycle | Bridge byte-flow timeout (`IDLE_TIMEOUT_MS`) stops the Codespace; GitHub `idle_timeout_minutes` as safety net |
+| Error handling | 401/403 → session invalidated, back to login; tunnel/SSH death closes the WS with a reason shown in the terminal |
 
-## Security assumptions and open risks
+Additional prerequisite: the GitHub CLI `gh` ≥ 2.40 on the backend host and on `PATH` — used **only** as the tunnel transport, authenticating from the per-user token via `GH_TOKEN` (no `gh auth login`).
 
-**Assumptions**
+### Setup
 
-1. **Token confinement.** The OAuth access token is held only in backend
-   memory and passed to `gh` via environment variable (never argv, never
-   disk). Anyone who can read backend process memory owns the tokens — run
-   the backend on trusted infrastructure only.
-2. **Session cookie = full shell access.** Whoever presents a valid session
-   cookie gets an interactive shell in that user's Codespace. Serve
-   exclusively over HTTPS in any non-local deployment (the cookie's `secure`
-   flag follows `BASE_URL`), and keep `SESSION_SECRET` truly secret.
-3. **Host key checking is disabled by design.** The Codespace's SSH host key
-   is generated per machine and reached only through a GitHub-authenticated
-   tunnel; there is no out-of-band channel to pin it. `gh`'s own generated
-   ssh config makes the same trade-off. A MITM would require compromising
-   the tunnel itself.
-4. **One session ↔ one Codespace.** The WS upgrade only accepts the Codespace
-   name stored in the caller's own session, so sessions cannot attach to
-   arbitrary Codespace names.
+1. **Register a GitHub OAuth App** (Settings → Developer settings → OAuth Apps → New OAuth App):
+   - Homepage URL: `http://localhost:3000` (or your public base URL).
+   - Authorization callback URL: `http://localhost:3000/auth/callback` — must equal `BASE_URL` + `/auth/callback`.
+   - Copy the Client ID and generate a Client secret. Scopes are requested at runtime: `codespace` (lifecycle + tunnel) and `repo` (private repos only).
+2. **Configure and run:**
+   ```bash
+   cd backend
+   cp .env.example .env      # client id/secret, owner/repo, session secret
+   npm install && npm run build && npm start
+   ```
+   The backend serves the frontend, so `http://localhost:3000` is all you need.
+3. **Use it:** Sign in with GitHub → Launch cloud terminal → the state advances (`Queued → Provisioning → Starting → Available`; cold create 1–4 min, restart ~30 s) → the terminal attaches automatically. Stop ends compute billing; `DELETE /api/codespaces/:name?purge=true` removes the machine.
 
-**Open risks / known instabilities**
-
-1. **⚠ Undocumented transport (`backend/src/ssh/ghTransport.ts`).**
-   Codespaces expose no public SSH endpoint; connectivity goes through
-   Microsoft Dev Tunnels via an internal API. We deliberately delegate that
-   hop to `gh codespace ssh --stdio` instead of re-implementing the
-   protocol. Both `--stdio` and the output format of
-   `gh codespace ssh --config` (parsed for `User` and `IdentityFile`) are
-   CLI behavior, not an API contract — a `gh` release can break this module.
-   It is isolated so that a fix touches exactly one file.
-2. **Key material on disk.** `gh` generates `~/.ssh/codespaces.auto` on the
-   backend host and authorizes it in Codespaces reachable by the token. The
-   prototype shares this keypair across all users on the host; per-user
-   `HOME`/key isolation is the first hardening step for multi-tenant use.
-3. **In-memory sessions.** A backend restart logs everyone out and forgets
-   which Codespaces it manages (GitHub's own idle timeout then catches
-   stragglers). Production: external session store + startup reconciliation
-   via `GET /user/codespaces`.
-4. **OAuth app tokens don't expire by default**, but users can revoke them;
-   every GitHub call maps 401/403 to a forced re-login.
-5. **Billing.** Codespaces bill the *user's* account (or the org, if
-   configured). The rate limiter and reuse logic prevent accidental fleets,
-   but a hostile user can still burn their own quota.
-6. **No CSRF token on state-changing routes** beyond `SameSite=Lax` — fine
-   for a prototype, add a CSRF token or `Origin` check before production.
-
-## API surface (backend)
+### API surface
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -170,13 +117,24 @@ The backend serves the frontend statically, so opening
 | DELETE | `/api/codespaces/:name` | Stop (`?purge=true` → delete) |
 | WS | `/ws/terminal?codespace=…&cols=…&rows=…` | Shell bridge |
 
+### Security assumptions and risks
+
+- **Token confinement.** The token lives only in backend memory and reaches `gh` via environment variable (never argv, never disk). Run the backend on trusted infrastructure only.
+- **Session cookie = full shell access.** Serve over HTTPS in any non-local deployment (the cookie's `secure` flag follows `BASE_URL`) and keep `SESSION_SECRET` secret.
+- **Host key checking is disabled by design.** The Codespace host key is per-machine and reached only through a GitHub-authenticated tunnel; `gh`'s own config makes the same trade-off.
+- **One session ↔ one Codespace.** The WS upgrade only accepts the Codespace name stored in the caller's session.
+- **⚠ Undocumented transport (`backend/src/ssh/ghTransport.ts`).** Codespaces expose no public SSH endpoint; connectivity goes through Microsoft Dev Tunnels. We delegate that hop to `gh codespace ssh --stdio` rather than re-implement it. Both `--stdio` and the parsed output of `gh codespace ssh --config` are CLI behavior, not an API contract — isolated so a fix touches one file.
+- **Key material on disk.** `gh` generates `~/.ssh/codespaces.auto` on the host, shared across users in this prototype; per-user key isolation is the first multi-tenant hardening step.
+- **In-memory sessions.** A restart logs everyone out; production wants an external session store + startup reconciliation via `GET /user/codespaces`.
+- **No CSRF token** beyond `SameSite=Lax`; add a CSRF token or `Origin` check before production.
+
 ---
 
-## Variant B — pure browser, no backend
+## Variant B — pure browser (PAT)
 
-Everything above assumed a Node.js bridge service. Variant B removes it
-entirely: a **static page** (hostable on GitHub Pages) plus a tiny
-**terminal server running inside the codespace itself**.
+No backend at all: a **static page** (hostable on GitHub Pages) plus a tiny **terminal server running inside the codespace itself**. The browser talks to `api.github.com` directly and reaches the terminal over a privately forwarded codespace port.
+
+### Architecture
 
 ```
 Browser ── fetch ──────────────► api.github.com   (create / poll / stop / delete)
@@ -186,120 +144,78 @@ Browser ── https + WebSocket ──► <codespace>-7681.app.github.dev
 
 ### How it works
 
-1. `frontend-pure/index.html` asks for a **personal access token** with the
-   `codespace` scope (plus `repo` access for private repositories). The token
-   lives in tab memory only. A full OAuth flow is impossible without a server:
-   `api.github.com` is CORS-enabled, but the token-exchange endpoints on
-   `github.com/login/oauth/*` reject cross-origin requests by design.
-2. The page calls the documented REST API directly from the browser:
-   reuse → start → create, then polls until `Available`. The creation request
-   sets `idle_timeout_minutes`, which is the lifecycle safety net — with no
-   server of our own, GitHub's idle timeout stops forgotten machines.
-3. The devcontainer starts `.devcontainer/terminal-bridge/server.js` on port
-   **7681** (`postStartCommand`). It serves the xterm.js terminal page and a
-   WebSocket-attached PTY — same wire protocol as Variant A (text = input,
-   `\0CTL`+JSON = resize, binary = output).
-4. The port stays **private**. GitHub's port-forwarding auth wall (cookie
-   based, codespace creator only, 3 h expiry) guards both the page and the
-   WebSocket, because both share the same origin — this same-origin trick is
-   what makes the private port workable without any token handling.
+1. `frontend-pure/index.html` asks for a **personal access token** (scope `codespace`, plus `repo` for private repos), kept in tab memory only. A browser-only OAuth flow is impossible: `api.github.com` is CORS-enabled, but `github.com/login/oauth/*` rejects cross-origin requests.
+2. The page calls the documented REST API directly (reuse → start → create) and polls until `Available`. The create request sets `idle_timeout_minutes` — with no server of our own, GitHub's idle timeout stops forgotten machines.
+3. The devcontainer starts `.devcontainer/terminal-bridge/server.js` on port **7681** (`postStartCommand`). It serves the xterm.js page and a WebSocket-attached PTY using the shared wire protocol.
+4. The port stays **private**. GitHub's port-forwarding auth wall (cookie-based, codespace creator only, 3 h expiry) guards both the page and the WebSocket because both share one origin — the same-origin trick that makes a private port usable without any token handling on our side.
 
 ### Setup
 
-1. Edit the config block at the bottom of `frontend-pure/index.html`
-   (`owner`, `repo`, `ref`) — or pass `?owner=…&repo=…` as URL parameters.
-2. Enable GitHub Pages for the repository (Settings → Pages → Source:
-   GitHub Actions). The `pages.yml` workflow deploys `frontend-pure/` on
-   every push to `main`.
-3. Make sure the **target repository** contains `.devcontainer/` with the
-   `terminal-bridge/` folder and the two lifecycle scripts (copy them over
-   if the target repo is a different one).
-4. Open the Pages URL, paste a token, click **Launch**, then **Open terminal**.
-   Signing in once on `*.app.github.dev` is the private-port protection.
+1. Set `owner`, `repo`, `ref` in the config block of `frontend-pure/index.html` (or pass `?owner=…&repo=…` as URL parameters).
+2. Enable GitHub Pages (Settings → Pages → Source: GitHub Actions). `pages.yml` deploys `frontend-pure/` on every push to `main`.
+3. Ensure the **target repository** contains `.devcontainer/` with `terminal-bridge/` and the lifecycle scripts.
+4. Open the Pages URL, paste a token, click Launch — the terminal opens automatically in a new tab. Signing in once on `*.app.github.dev` is the private-port protection.
 
-### Trade-offs vs. Variant A
+### Security assumptions and risks
 
-| | A: backend service | B: pure browser |
-|---|---|---|
-| Servers to operate | 1 (Node + gh CLI) | 0 |
-| Auth | OAuth flow, token server-side | PAT pasted by the user |
-| Undocumented surface | `gh codespace ssh --stdio` transport | none (REST + documented port forwarding) |
-| Terminal embedding | inline on the landing page | separate tab on `app.github.dev` |
-| Rate limiting | server-side (express-rate-limit) | client-side guard + GitHub API limits only |
-| Idle handling | bridge stops the codespace actively | GitHub `idle_timeout_minutes` only |
-
-### Variant-B security assumptions and open risks
-
-1. **The token is only as safe as the page.** It stays in memory, but any XSS
-   on the landing page could read it. Keep the page dependency-free (it is)
-   and serve it from a trusted origin. A fine-grained token limited to the
-   one repository reduces the blast radius.
-2. **Port 7681 must never be made public.** The bridge performs no
-   authentication of its own beyond a same-origin check and an optional
-   `BRIDGE_SHARED_SECRET`; the security boundary is GitHub's private-port
-   auth wall. A public port would expose a shell to anyone with the URL.
-3. **Private-port behavior is product behavior, not an API contract.** The
-   cookie flow, the 3 h expiry, and the `app.github.dev` domain are
-   documented but may change; the domain is therefore configurable in the
-   page config.
-4. **No server-side rate limit.** The cooldown lives in the page and can be
-   bypassed; the hard backstop is the user's own Codespaces quota and
-   GitHub's API rate limits.
+- **The token is only as safe as the page.** It stays in memory, but XSS on the page could read it; keep the page dependency-free (it is) and prefer a fine-grained token scoped to the one repository.
+- **Port 7681 must never be made public.** The bridge authenticates only via a same-origin check and an optional `BRIDGE_SHARED_SECRET`; the real boundary is GitHub's private-port auth wall.
+- **Private-port behavior is product behavior, not an API contract.** The cookie flow, the 3 h expiry, and the `app.github.dev` domain may change; the domain is configurable in the page config.
+- **No server-side rate limit.** The client-side cooldown can be bypassed; the backstop is the user's own Codespaces quota and GitHub's API limits.
 
 ---
 
-## Variant C — no token entry (OAuth + PKCE + minimal exchange function)
+## Variant C — no token entry (OAuth + PKCE)
 
-Variant B works with zero backend but asks the user to paste a personal access
-token. Variant C removes that step. It cannot be fully backend-free: GitHub's
-OAuth token endpoint has no CORS and still requires the `client_secret`, so the
-code→token exchange cannot run in the browser even with PKCE. The only extra
-piece is one tiny, stateless function that does exactly that exchange.
+Variant B's only friction is the pasted PAT. Variant C removes it with a GitHub sign-in. It cannot be fully backend-free: GitHub's OAuth token endpoint has no CORS and still requires the `client_secret`, so the code→token exchange cannot run in the browser even with PKCE. The only added piece is one tiny, stateless function that performs exactly that exchange.
+
+### Architecture
 
 ```
 Browser ── authorize (top-level redirect, silent if already authorized) ─► github.com
 Browser ── POST {code, verifier} ─► auth-worker  ── code→token (holds secret) ─► github.com
 Browser ── fetch (Bearer token) ─► api.github.com     (create / poll / stop)
-Browser ── https ─► <codespace>-7681.app.github.dev   (in-codespace bridge)
+Browser ── https ─► <codespace>-7681.app.github.dev   (in-codespace bridge, as in Variant B)
 ```
 
-### Pieces
+### How it works
 
-- `auth-worker/` — a ~90-line `export default { fetch }` handler (Cloudflare
-  Workers by default, portable to Vercel/Netlify/Node). Holds the client
-  secret, exchanges `{ code, code_verifier }` for an access token, returns only
-  the token. See `auth-worker/README.md`.
-- `frontend-oauth/` — the landing page with a "Sign in with GitHub" button
-  instead of a token field. Runs the authorization-code flow with PKCE; an
-  already-signed-in, previously-authorized user is redirected back silently.
+1. `frontend-oauth/` shows a **Sign in with GitHub** button. It runs the authorization-code flow with PKCE (S256): it generates a `code_verifier`, redirects to `authorize` with the `code_challenge`, and validates `state` on return. An already-signed-in, previously-authorized user returns silently — no prompt, no token entry.
+2. On return, the page POSTs `{ code, code_verifier }` to `auth-worker/`, which holds the `client_secret` and performs the one hop the browser cannot. It returns only the access token, which then lives in tab memory — as in Variant B.
+3. From there the flow is identical to Variant B: create/poll via `api.github.com`, terminal over the private codespace port.
+
+`auth-worker/` is a ~90-line `export default { fetch }` handler — Cloudflare Workers by default, portable to Vercel/Netlify/Node (see `auth-worker/README.md`).
 
 ### Setup
 
-1. Register an OAuth App (or GitHub App). Callback URL = the Pages URL of
-   `frontend-oauth` (e.g. `https://elisofke.github.io/Spacehatch/`).
-2. Deploy the worker (`auth-worker/README.md`), setting `GITHUB_CLIENT_ID`,
-   `GITHUB_CLIENT_SECRET`, and `ALLOWED_ORIGIN` (your Pages origin).
+1. Register an OAuth App (or GitHub App). Callback URL = the Pages URL of `frontend-oauth` (e.g. `https://elisofke.github.io/Spacehatch/`).
+2. Deploy the worker (`auth-worker/README.md`), setting `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `ALLOWED_ORIGIN` (your Pages origin).
 3. In `frontend-oauth/index.html`, set `clientId` and `authWorkerUrl`.
-4. Point Pages at `frontend-oauth/` instead of `frontend-pure/` (edit the
-   `path:` in `.github/workflows/pages.yml`), or host it anywhere static.
+4. Point Pages at `frontend-oauth/` (edit `path:` in `.github/workflows/pages.yml`), or host it anywhere static.
 
-### Variant matrix
+### Security assumptions and risks
 
-| | A: backend | B: pure browser | C: OAuth + exchange fn |
+- **Client secret confinement.** The secret lives only in the worker's secret store — never in the repo or the browser.
+- **PKCE binds the exchange** to the browser session that started it, so an intercepted authorization code alone cannot be redeemed.
+- **The worker is origin-locked.** It accepts only `ALLOWED_ORIGIN` and returns only the token; the token then lives solely in tab memory, like Variant B.
+- **CSRF and replay.** `state` is validated on return, and the code is stripped from the URL immediately to prevent replay on reload.
+- Inherits Variant B's private-port and rate-limit considerations for everything after sign-in.
+
+---
+
+## Comparison
+
+| | A · backend service | B · pure browser (PAT) | C · OAuth + PKCE |
 |---|---|---|---|
-| Servers to operate | 1 (Node + gh CLI) | 0 | 1 tiny stateless function |
+| Servers to operate | 1 (Node + `gh` CLI) | 0 | 1 tiny stateless function |
 | Sign-in | OAuth, token server-side | paste a PAT | one click, no token entry |
 | Token location | server memory | tab memory | tab memory |
 | Client secret | on the server | not used | in the exchange function only |
+| Terminal transport | `ssh2` bridge on the backend host | in-codespace `node-pty` bridge | in-codespace `node-pty` bridge |
+| Terminal embedding | inline on the landing page | separate tab on `app.github.dev` | separate tab on `app.github.dev` |
+| Undocumented surface | `gh codespace ssh --stdio` | none | none |
+| Rate limiting | server-side (`express-rate-limit`) | client-side guard + GitHub limits | client-side guard + GitHub limits |
+| Idle handling | bridge stops the codespace actively | GitHub `idle_timeout_minutes` | GitHub `idle_timeout_minutes` |
 | Best when | embedded terminal, full control | quickest to stand up | frictionless sign-in, minimal ops |
 
-### Variant-C security notes
-
-- The client secret lives only in the worker's secret store — never in the
-  repo or the browser.
-- PKCE binds the exchange to the browser session that started it, so an
-  intercepted authorization code alone cannot be redeemed.
-- The worker only accepts its configured `ALLOWED_ORIGIN` and returns only the
-  token; the token then lives solely in the tab's memory, like Variant B.
-- `state` is validated on return to block CSRF, and the code is stripped from
-  the URL immediately to prevent replay on reload.
+**Which to choose.** Pick **A** when the terminal must be embedded in your own page and you want full server-side control over auth, rate limiting, and lifecycle — accepting a Node host with the `gh` CLI and the one undocumented transport. Pick **B** for the least possible infrastructure when asking users for a PAT is acceptable; there is nothing to operate beyond static hosting. Pick **C** when you want one-click sign-in with no token entry and can run a single tiny, stateless function for the OAuth exchange.

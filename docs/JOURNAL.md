@@ -93,3 +93,12 @@
   PKCE S256 verified against the RFC 7636 reference vector.
 - Pages still deploys frontend-pure by default (works standalone); switching to
   frontend-oauth requires the worker + clientId/authWorkerUrl to be set first.
+
+## docs — README restructured for symmetry
+- Problem: README treated Variant A as the main doc (structure, prereqs, setup,
+  API, risks) and appended B and C, so the variants were not comparable.
+- New shape (MECE): shared intro + Concept (the invariant \0CTL wire protocol)
+  → Project structure grouped by variant → Prerequisites → three variant
+  chapters with an identical skeleton (Architecture / How it works / Setup /
+  Security; A also API surface) → a single unified Comparison with a
+  "which to choose" guide. No information dropped; docs-only, no version bump.
