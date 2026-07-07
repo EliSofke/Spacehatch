@@ -132,3 +132,25 @@
   deployment now launches a Codespace for any repo the token can open.
 - Verified: backend builds and starts without GITHUB_OWNER/REPO, /api/session
   reports allowRepoOverride, unauth create -> 401, name validation in place.
+
+## research — browser-SSH feasibility probes (Variante D groundwork)
+Probed live against a running codespace (read-only, tokens scrubbed):
+1. GitHub REST: GET /user/codespaces/{name}?internal=true returns
+   connection.tunnelProperties (tunnelId, clusterId, connectAccessToken,
+   managePortsAccessToken, serviceUri, domain) AND the response carries
+   Access-Control-Allow-Origin: * — the browser can fetch tunnel credentials
+   directly from any origin with the user's token. No connection-info proxy
+   needed. (internal=true is undocumented behavior; flagged as risk.)
+2. Dev Tunnels management API (…rel.tunnels.api.visualstudio.com): CORS is
+   ORIGIN-ALLOWLISTED. Preflight with Origin https://vscode.dev returns
+   access-control-allow-origin: https://vscode.dev; github.dev and our Pages
+   origin get 204 WITHOUT ACAO → browser fetch from our origin fails.
+3. Auth scheme confirmed: "Authorization: tunnel <connectAccessToken>" → 200.
+   The tunnel object exposes endpoints[0].clientRelayUri (the WSS relay URI),
+   hostPublicKeys, portUriFormat.
+Verdict for Variante D: everything moves to the browser EXCEPT (a) the OAuth
+exchange (unchanged) and (b) ONE ~20-line CORS relay for the tunnels
+management GET that resolves clientRelayUri. The WSS relay handshake itself
+has no CORS preflight; its server-side Origin policy is the one remaining
+unknown, to be settled by a live SDK spike (@microsoft/dev-tunnels-ssh +
+-connections + xterm.js).
