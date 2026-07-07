@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bootstrap the freshly created GitHub repo in one step.
+# Bootstrap Spacehatch in a freshly created GitHub repo, in one step.
 #
 # Usage:  ./scripts/bootstrap.sh <owner>/<repo> [https]
 #

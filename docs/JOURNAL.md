@@ -37,3 +37,14 @@
 - Variant B: consider a GitHub App with device-flow proxy if a minimal
   serverless function ever becomes acceptable; revisit if GitHub ships a
   public port-visibility API or CORS on the OAuth endpoints.
+
+## v0.2.1 — project named: Spacehatch
+- Renamed the project to Spacehatch. Rationale: a hatch is the narrow,
+  well-defined opening into a larger vessel — matches the product's job of
+  being one deliberate entry point into a Codespace, nothing more.
+- Renamed root directory, both package.json names (spacehatch-backend,
+  spacehatch-terminal-bridge) and their lockfiles, devcontainer name,
+  page titles/brand marks in both frontend variants, README title.
+- No functional change; backend rebuild and the full terminal-bridge
+  integration suite (origin guard, PTY round-trip, resize, shared secret)
+  re-run clean after the rename.

@@ -1,6 +1,6 @@
-# One-Click Cloud Terminal from a Repo Landing Page
+# Spacehatch
 
-A visitor clicks one button on a static landing page and gets an interactive shell — rendered with xterm.js in the browser — inside a GitHub Codespace for a fixed repository. No VS Code UI, no local software. The Codespace runs on GitHub's infrastructure; this backend only orchestrates and bridges.
+One-click cloud terminal from a repo landing page. A visitor clicks one button on a static landing page and gets an interactive shell — rendered with xterm.js in the browser — inside a GitHub Codespace for a fixed repository. No VS Code UI, no local software. The Codespace runs on GitHub's infrastructure; the Spacehatch service only orchestrates and bridges.
 
 ```
 Browser ── xterm.js + AttachAddon ── WebSocket ──┐

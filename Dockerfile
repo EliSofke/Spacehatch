@@ -1,4 +1,4 @@
-# Runtime image for the codespace-terminal backend.
+# Runtime image for the Spacehatch backend.
 # The gh CLI is a hard runtime dependency: it provides the tunnel transport
 # (see backend/src/ssh/ghTransport.ts). GitHub itself cannot host this
 # process — deploy the image to any container host (Fly.io, Cloud Run, a VM).

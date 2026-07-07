@@ -1,8 +1,8 @@
 {
-  "name": "terminal-bridge",
+  "name": "spacehatch-terminal-bridge",
   "version": "0.2.0",
   "private": true,
-  "description": "In-codespace web terminal: serves xterm.js UI and a WebSocket-attached PTY on a privately forwarded port.",
+  "description": "Spacehatch in-codespace web terminal: serves xterm.js UI and a WebSocket-attached PTY on a privately forwarded port.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

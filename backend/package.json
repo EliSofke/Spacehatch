@@ -1,8 +1,8 @@
 {
-  "name": "codespace-terminal-backend",
+  "name": "spacehatch-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "One-click cloud terminal: launches a GitHub Codespace and bridges its shell to the browser via SSH + WebSocket.",
+  "description": "Spacehatch: one-click cloud terminal that launches a GitHub Codespace and bridges its shell to the browser via SSH + WebSocket.",
   "main": "dist/server.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
