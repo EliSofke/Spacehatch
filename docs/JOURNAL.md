@@ -109,3 +109,10 @@
   the concrete failure each omission causes, e.g. 502), the note that
   node_modules is not committed, and that A needs nothing in the target repo.
 - Verified every listed path against the actual tree; docs-only, no version bump.
+
+## docs — troubleshooting section (real failure modes)
+- Captured the two pitfalls hit live: (1) 403 "forbidden" from a token without
+  Codespaces write (a push token has Contents/Workflows only); read-but-not-write
+  fails on create/start. (2) 502 from a stale Codespace created before a
+  devcontainer change — delete and relaunch so a fresh one runs the current
+  lifecycle scripts. Added a symptom→cause→fix table; docs-only.

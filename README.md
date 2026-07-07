@@ -240,3 +240,15 @@ Browser ── https ─► <codespace>-7681.app.github.dev   (in-codespace brid
 | Best when | embedded terminal, full control | quickest to stand up | frictionless sign-in, minimal ops |
 
 **Which to choose.** Pick **A** when the terminal must be embedded in your own page and you want full server-side control over auth, rate limiting, and lifecycle — accepting a Node host with the `gh` CLI and the one undocumented transport. Pick **B** for the least possible infrastructure when asking users for a PAT is acceptable; there is nothing to operate beyond static hosting. Pick **C** when you want one-click sign-in with no token entry and can run a single tiny, stateless function for the OAuth exchange.
+
+## Troubleshooting
+
+Symptom → cause → fix for the failure modes seen in practice:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| **Launch fails immediately: "forbidden"** | The token lacks Codespaces access (e.g. a token scoped only for `Contents`/`Workflows`, such as a push token). | Use a token with **Codespaces: Read and write** (fine-grained) or the **`codespace`** scope (classic). It must also have access to the target repository. |
+| **Launch fails after listing: "forbidden"** | The token has Codespaces **read** but not **write**, so create/start is rejected. | Raise the token's Codespaces permission from Read to **Read and write**. |
+| **Terminal URL returns 502 Bad Gateway** | Port `7681` is forwarded but nothing listens: the in-codespace bridge did not come up. Common when the Codespace predates a devcontainer change and still runs the old lifecycle scripts. | **Delete the Codespace and relaunch** so a fresh one uses the current `.devcontainer/` scripts. Persistent failures are logged to `/tmp/spacehatch-bridge.log` inside the Codespace. |
+| **Terminal URL returns 404** | Port `7681` is not forwarded yet — the bridge has not started, so the port was never registered. | Wait for the bridge to start, or delete and relaunch; confirm the target repo carries the full `.devcontainer/` bridge (see [Required repository artifacts](#required-repository-artifacts)). |
+| **Codespace stuck in `Provisioning`** | A first cold start takes 1–4 minutes. | Wait; the terminal tab shows a loading screen and opens automatically once the state reaches `Available`. |
