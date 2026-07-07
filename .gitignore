@@ -1,0 +1,11 @@
+# Secrets — never commit tokens or the session secret
+.env
+*.pem
+
+# Build output and dependencies
+backend/node_modules/
+backend/dist/
+
+# Editor / OS noise
+.vscode/
+.DS_Store
