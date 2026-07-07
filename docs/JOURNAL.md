@@ -59,3 +59,19 @@
 - Added BRIDGE_GRACE_MS: wait for the in-codespace bridge (postStartCommand)
   to start listening before navigating, avoiding a 502 on the private port.
 - Hint copy now sets cold-start expectations.
+
+## v0.2.3 — deterministic in-codespace bridge startup
+- Symptom: terminal URL returned 502 Bad Gateway. Diagnosis: port 7681 IS
+  forwarded and GitHub auth passes (proves headless port forwarding works),
+  but nothing listens on 7681 — the bridge did not come up.
+- Hardened startup (the real fault line, not the wire protocol):
+  - setup.sh: fail-loud install + explicit `require('node-pty')` load check,
+    so a broken native module surfaces in the creation log, not as a 502.
+  - start-bridge.sh: idempotent dep check (reinstall if node-pty unloadable),
+    fully detached start via setsid+nohup so the process survives the
+    lifecycle shell, and a /healthz readiness probe that logs a diagnosis on
+    failure instead of failing silently.
+- Verified locally: readiness probe detects health, node-pty loads, bridge
+  logs its start line; integration suite still green.
+- To adopt: push v0.2.3, then delete the current codespace and relaunch so
+  the fresh codespace uses the hardened devcontainer lifecycle scripts.
