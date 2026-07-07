@@ -34,6 +34,10 @@ els.repoName.textContent = `${cfg.owner}/${cfg.repo}`;
 
 const state = { codespaceName: null, launching: false, lastLaunchAt: 0 };
 const LAUNCH_COOLDOWN_MS = 60 * 1000; // client-side guard against double launches
+// After a codespace reports "Available", its forwarded port needs a moment
+// before the in-codespace bridge is actually listening (postStartCommand
+// race). Wait this long before navigating the terminal tab to avoid a 502.
+const BRIDGE_GRACE_MS = 8 * 1000;
 
 function setStatus(text, live = false) {
   els.status.textContent = text;
@@ -110,6 +114,13 @@ els.launch.addEventListener("click", async () => {
   state.lastLaunchAt = Date.now();
   els.launch.disabled = true;
 
+  // Open the terminal tab NOW, inside the click gesture, so popup blockers
+  // let it through. It shows a loading page and is navigated to the real
+  // terminal URL once the codespace is up. If the browser blocks it anyway,
+  // termWin is null and we fall back to the manual "Open terminal" button.
+  const termWin = window.open("", "_blank");
+  writeLoadingPage(termWin, "Provisioning your codespace …");
+
   try {
     setStatus("looking for an existing codespace …", true);
     const { codespaces = [] } = await gh(
@@ -134,18 +145,44 @@ els.launch.addEventListener("click", async () => {
     state.codespaceName = cs.name;
     cs = await pollUntilAvailable(cs.name);
 
-    els.open.href = terminalUrl(cs.name);
+    const url = terminalUrl(cs.name);
+    els.open.href = url;
     els.open.classList.remove("hidden");
     els.stop.classList.remove("hidden");
     els.del.classList.remove("hidden");
-    setStatus(`ready — ${cs.name}`, true);
+
+    // Give the bridge a moment to start listening, then navigate the tab.
+    setStatus(`ready — ${cs.name}; opening terminal …`, true);
+    writeLoadingPage(termWin, "Codespace ready — starting the terminal …");
+    await new Promise((r) => setTimeout(r, BRIDGE_GRACE_MS));
+    if (termWin && !termWin.closed) {
+      termWin.location.href = url;
+    } else {
+      // Popup was blocked or closed: prompt the user to use the button.
+      setStatus(`ready — ${cs.name}. Click “Open terminal ↗”.`, true);
+    }
   } catch (err) {
     setStatus(`Launch failed: ${err.message}`);
+    writeLoadingPage(termWin, `Launch failed: ${err.message}`);
   } finally {
     state.launching = false;
     els.launch.disabled = false;
   }
 });
+
+/** Render a minimal status page into the opened terminal tab. */
+function writeLoadingPage(win, message) {
+  if (!win || win.closed) return;
+  try {
+    win.document.title = "Spacehatch — terminal";
+    win.document.body.style.cssText =
+      "margin:0;height:100vh;display:flex;align-items:center;justify-content:center;" +
+      "background:#0a0e12;color:#f2a33c;font-family:ui-monospace,Menlo,monospace;font-size:14px";
+    win.document.body.textContent = message;
+  } catch {
+    /* cross-origin after navigation: nothing to do */
+  }
+}
 
 els.stop.addEventListener("click", async () => {
   if (!state.codespaceName) return;

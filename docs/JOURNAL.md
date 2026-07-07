@@ -48,3 +48,14 @@
 - No functional change; backend rebuild and the full terminal-bridge
   integration suite (origin guard, PTY round-trip, resize, shared secret)
   re-run clean after the rename.
+
+## v0.2.2 — pure-browser terminal auto-opens
+- Symptom: after "Launch" nothing opened — the manual "Open terminal" button
+  only appeared at state=Available, and a fresh codespace shows "Provisioning"
+  for 1–4 minutes first.
+- Fix: open the terminal tab synchronously inside the click gesture (popup-
+  blocker safe), show a loading page, then navigate it to the port-forwarding
+  URL once Available. Manual button kept as fallback when popups are blocked.
+- Added BRIDGE_GRACE_MS: wait for the in-codespace bridge (postStartCommand)
+  to start listening before navigating, avoiding a 502 on the private port.
+- Hint copy now sets cold-start expectations.
