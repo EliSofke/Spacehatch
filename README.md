@@ -55,6 +55,27 @@ What differs between variants is only two axes: **auth** (server-held OAuth toke
 
 Each variant lists its own additional prerequisites in its Setup section.
 
+## Required repository artifacts
+
+A Codespace is created from the **target repository**, so what that repository contains decides whether a terminal can start.
+
+**Variants B and C** serve the terminal from inside the Codespace, so the target repository must contain the in-codespace bridge — committed and pushed, on the `ref` the Codespace is created from:
+
+| Artifact | Role | Missing → |
+|---|---|---|
+| `.devcontainer/devcontainer.json` | Forwards port `7681` and wires the lifecycle commands (`postCreateCommand` → `setup.sh`, `postStartCommand` → `start-bridge.sh`) | Port never forwarded / bridge never started |
+| `.devcontainer/setup.sh` | Installs bridge dependencies once at creation, verifies `node-pty` loads | Bridge cannot start |
+| `.devcontainer/start-bridge.sh` | Starts the bridge detached on every start, probes `/healthz` | Nothing listens on `7681` |
+| `.devcontainer/terminal-bridge/package.json` (+ `package-lock.json`) | Declares `ws` and `node-pty` for a reproducible install | Install fails |
+| `.devcontainer/terminal-bridge/server.js` | The `ws` + `node-pty` bridge on port `7681` | Nothing listens on `7681` |
+| `.devcontainer/terminal-bridge/terminal.html` | The xterm.js page the bridge serves | Terminal page 404s |
+
+If any of these is absent, the Codespace still comes up but nothing listens on `7681`, and the forwarded-port URL returns **502 Bad Gateway**. `node_modules/` is *not* committed — `setup.sh` installs dependencies inside the Codespace. After changing any devcontainer artifact, delete and relaunch the Codespace: lifecycle changes only take effect in a freshly created one.
+
+The landing page (`frontend-pure/` or `frontend-oauth/`) and, for Variant C, the `auth-worker/` are hosted separately (GitHub Pages / a function host). They are **not** required inside the target repository.
+
+**Variant A** requires no artifacts in the target repository. It attaches over SSH to the Codespace's standard shell through the `gh` tunnel, so any repository the token can open works unchanged.
+
 ---
 
 ## Variant A — backend service

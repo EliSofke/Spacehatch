@@ -102,3 +102,10 @@
   chapters with an identical skeleton (Architecture / How it works / Setup /
   Security; A also API surface) → a single unified Comparison with a
   "which to choose" guide. No information dropped; docs-only, no version bump.
+
+## docs — required repository artifacts documented
+- Added a "Required repository artifacts" chapter after Prerequisites: a table
+  of the .devcontainer/ bridge files the TARGET repo must carry for B/C (with
+  the concrete failure each omission causes, e.g. 502), the note that
+  node_modules is not committed, and that A needs nothing in the target repo.
+- Verified every listed path against the actual tree; docs-only, no version bump.
