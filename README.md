@@ -74,7 +74,7 @@ If any of these is absent, the Codespace still comes up but nothing listens on `
 
 The landing page (`frontend-pure/` or `frontend-oauth/`) and, for Variant C, the `auth-worker/` are hosted separately (GitHub Pages / a function host). They are **not** required inside the target repository.
 
-**Variant A** requires no artifacts in the target repository. It attaches over SSH to the Codespace's standard shell through the `gh` tunnel, so any repository the token can open works unchanged.
+**Variant A** requires no artifacts in the target repository. It attaches over SSH to the Codespace's standard shell through the `gh` tunnel, so any repository the token can open works unchanged. In **repo-agnostic mode** (`ALLOW_REPO_OVERRIDE=true`, the default), a single deployment launches a Codespace for whatever repo is passed as `?owner=…&repo=…`, so every target repo stays bare. This is the only variant that reaches a bare repo, because B and C need the port forwarded, which requires either the target repo's `forwardPorts` or a connected VS Code client.
 
 ---
 
@@ -122,7 +122,7 @@ Additional prerequisite: the GitHub CLI `gh` ≥ 2.40 on the backend host and on
    cp .env.example .env      # client id/secret, owner/repo, session secret
    npm install && npm run build && npm start
    ```
-   The backend serves the frontend, so `http://localhost:3000` is all you need.
+   The backend serves the frontend, so `http://localhost:3000` is all you need. Leave `GITHUB_OWNER`/`GITHUB_REPO` empty with `ALLOW_REPO_OVERRIDE=true` for repo-agnostic mode (any bare repo via `?owner=…&repo=…`), or pin a single default repo.
 3. **Use it:** Sign in with GitHub → Launch cloud terminal → the state advances (`Queued → Provisioning → Starting → Available`; cold create 1–4 min, restart ~30 s) → the terminal attaches automatically. Stop ends compute billing; `DELETE /api/codespaces/:name?purge=true` removes the machine.
 
 ### API surface
@@ -237,7 +237,8 @@ Browser ── https ─► <codespace>-7681.app.github.dev   (in-codespace brid
 | Undocumented surface | `gh codespace ssh --stdio` | none | none |
 | Rate limiting | server-side (`express-rate-limit`) | client-side guard + GitHub limits | client-side guard + GitHub limits |
 | Idle handling | bridge stops the codespace actively | GitHub `idle_timeout_minutes` | GitHub `idle_timeout_minutes` |
-| Best when | embedded terminal, full control | quickest to stand up | frictionless sign-in, minimal ops |
+| Works on a **bare** target repo (no artifacts) | **yes** (attaches via SSH; repo-agnostic) | no — needs the `.devcontainer/` bridge | no — needs the `.devcontainer/` bridge |
+| Best when | any/bare repo, embedded terminal, full control | quickest to stand up | frictionless sign-in, minimal ops |
 
 **Which to choose.** Pick **A** when the terminal must be embedded in your own page and you want full server-side control over auth, rate limiting, and lifecycle — accepting a Node host with the `gh` CLI and the one undocumented transport. Pick **B** for the least possible infrastructure when asking users for a PAT is acceptable; there is nothing to operate beyond static hosting. Pick **C** when you want one-click sign-in with no token entry and can run a single tiny, stateless function for the OAuth exchange.
 

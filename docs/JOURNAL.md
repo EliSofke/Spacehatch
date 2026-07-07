@@ -116,3 +116,19 @@
   fails on create/start. (2) 502 from a stale Codespace created before a
   devcontainer change — delete and relaunch so a fresh one runs the current
   lifecycle scripts. Added a symptom→cause→fix table; docs-only.
+
+## v0.4.0 — Variant A repo-agnostic (works on any bare repo)
+- Requirement: dial into a terminal on ANY bare repo, nothing committed to it.
+- Grounded finding: the in-codespace-bridge variants (B/C) can't reach a bare
+  repo — the forwarded port needs either the target repo's forwardPorts or a
+  connected VS Code client; dotfiles run per-codespace but cannot declare
+  forwardPorts for the target codespace, and headless dynamic auto-forward is
+  a client feature. So bare-repo access is only reliable via Variant A's
+  server-side gh SSH tunnel, which attaches to the standard shell every
+  codespace has — zero target-repo artifacts.
+- Change: made Variant A repo-agnostic. owner/repo optional in config;
+  ALLOW_REPO_OVERRIDE (default true) lets the frontend pass owner/repo per
+  request (?owner=&repo=), validated against GitHub's name charset. One
+  deployment now launches a Codespace for any repo the token can open.
+- Verified: backend builds and starts without GITHUB_OWNER/REPO, /api/session
+  reports allowRepoOverride, unauth create -> 401, name validation in place.

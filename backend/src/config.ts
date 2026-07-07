@@ -28,9 +28,16 @@ export const config = {
   githubClientId: required("GITHUB_CLIENT_ID"),
   githubClientSecret: required("GITHUB_CLIENT_SECRET"),
 
-  /** The one fixed repository this landing page launches a Codespace for. */
-  owner: required("GITHUB_OWNER"),
-  repo: required("GITHUB_REPO"),
+  /**
+   * Default repository, used when a request does not specify one and as the
+   * value shown on the landing page. Optional: with ALLOW_REPO_OVERRIDE=true
+   * a single deployment can launch a Codespace for ANY repo the user's token
+   * can open (owner/repo supplied per request), so target repos stay bare.
+   */
+  owner: process.env.GITHUB_OWNER ?? "",
+  repo: process.env.GITHUB_REPO ?? "",
+  /** Allow the frontend to pass owner/repo per request (repo-agnostic mode). */
+  allowRepoOverride: (process.env.ALLOW_REPO_OVERRIDE ?? "true") === "true",
   /** Git ref to create the Codespace on. */
   ref: process.env.GITHUB_REF ?? "main",
   /** Optional machine type, e.g. "basicLinux32gb". Empty = GitHub default. */

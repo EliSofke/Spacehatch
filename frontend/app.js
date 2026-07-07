@@ -32,6 +32,11 @@ const state = {
 
 const CONTROL_MAGIC = new Uint8Array([0x00, 0x43, 0x54, 0x4c]); // "\0CTL"
 
+// Target repo: taken from ?owner=&repo=, else the backend's configured default.
+// This lets one deployment launch a Codespace for any bare repo the token opens.
+const qs = new URLSearchParams(window.location.search);
+const target = { owner: qs.get("owner") || "", repo: qs.get("repo") || "" };
+
 function setStatus(text, live = false) {
   els.status.textContent = text;
   els.status.classList.toggle("live", live);
@@ -68,7 +73,14 @@ async function api(path, options = {}) {
 (async function boot() {
   try {
     const session = await api("/api/session");
-    els.repoName.textContent = session.repo;
+    if (!target.owner || !target.repo) {
+      // Fall back to the backend default when no ?owner=&repo= was given.
+      const [o, r] = (session.defaultRepo || "").split("/");
+      target.owner = target.owner || o || "";
+      target.repo = target.repo || r || "";
+    }
+    els.repoName.textContent =
+      target.owner && target.repo ? `${target.owner}/${target.repo}` : "(pass ?owner=…&repo=…)";
     if (session.authenticated) {
       els.launch.classList.remove("hidden");
       setStatus(`signed in as ${session.login}`);
@@ -92,7 +104,10 @@ els.launch.addEventListener("click", async () => {
   els.launch.disabled = true;
   try {
     setStatus("requesting codespace …", true);
-    const created = await api("/api/codespaces", { method: "POST" });
+    const created = await api("/api/codespaces", {
+      method: "POST",
+      body: JSON.stringify({ owner: target.owner, repo: target.repo }),
+    });
     state.codespaceName = created.name;
 
     const cs = await pollUntilAvailable(created.name);

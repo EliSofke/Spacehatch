@@ -138,10 +138,12 @@ function handleApiError(err: unknown, session: Session, res: Response): void {
 
 app.get("/api/session", (req, res) => {
   const session = sessionFromRequest(req);
+  const defaultRepo = config.owner && config.repo ? `${config.owner}/${config.repo}` : "";
+  const base = { defaultRepo, allowRepoOverride: config.allowRepoOverride };
   res.json(
     session
-      ? { authenticated: true, login: session.login, repo: `${config.owner}/${config.repo}` }
-      : { authenticated: false, loginUrl: "/auth/login", repo: `${config.owner}/${config.repo}` },
+      ? { authenticated: true, login: session.login, ...base }
+      : { authenticated: false, loginUrl: "/auth/login", ...base },
   );
 });
 
@@ -158,21 +160,41 @@ const createLimiter = rateLimit({
   message: { error: "rate_limited", message: "Too many launch attempts; wait a minute." },
 });
 
+/** Owner/repo name validation: GitHub's allowed character set, no path tricks. */
+const NAME_RE = /^[A-Za-z0-9._-]+$/;
+
 /**
  * POST /api/codespaces
  * Idempotent-ish launch: reuse an existing Codespace of this user for the
- * configured repo (starting it if stopped), otherwise create a new one.
+ * target repo (starting it if stopped), otherwise create a new one.
+ *
+ * Repo-agnostic: owner/repo may be supplied per request (when
+ * ALLOW_REPO_OVERRIDE is on), so a single deployment launches a Codespace for
+ * any repo the user's token can open — the target repo needs no artifacts.
  */
 app.post("/api/codespaces", requireSession, createLimiter, async (req, res) => {
   const { session } = req as AuthedRequest;
+
+  const body = (req.body ?? {}) as { owner?: string; repo?: string };
+  const owner = config.allowRepoOverride && body.owner ? body.owner : config.owner;
+  const repo = config.allowRepoOverride && body.repo ? body.repo : config.repo;
+  if (!owner || !repo) {
+    res.status(400).json({ error: "missing_repo", message: "owner and repo are required" });
+    return;
+  }
+  if (!NAME_RE.test(owner) || !NAME_RE.test(repo)) {
+    res.status(400).json({ error: "invalid_repo", message: "owner/repo contain invalid characters" });
+    return;
+  }
+
   try {
-    const existing = await listRepoCodespaces(session.accessToken, config.owner, config.repo);
+    const existing = await listRepoCodespaces(session.accessToken, owner, repo);
     let cs = existing.find((c) => c.state !== "Deleted" && c.state !== "Failed");
 
     if (cs && (cs.state === "Shutdown" || cs.state === "Archived")) {
       cs = await startCodespace(session.accessToken, cs.name);
     } else if (!cs) {
-      cs = await createCodespace(session.accessToken, config.owner, config.repo, config.ref, {
+      cs = await createCodespace(session.accessToken, owner, repo, config.ref, {
         machine: config.machine || undefined,
         idleTimeoutMinutes: config.codespaceIdleTimeoutMinutes,
       });
@@ -281,5 +303,9 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 server.listen(config.port, () => {
-  console.log(`[server] listening on ${config.baseUrl} (repo: ${config.owner}/${config.repo})`);
+  const repoInfo =
+    config.owner && config.repo
+      ? `default repo: ${config.owner}/${config.repo}`
+      : "repo-agnostic (owner/repo per request)";
+  console.log(`[server] listening on ${config.baseUrl} (${repoInfo})`);
 });
