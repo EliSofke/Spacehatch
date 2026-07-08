@@ -262,3 +262,22 @@ Fix (no rebuild): import the shared https://esm.sh/node/process.mjs singleton
 and set release.name to "browser" before connect(), flipping isNode() false so
 the SDK takes its browser path. Next live test should show client.connect()
 resolving; then finalize bindShell.
+
+## spike — Variant D: correcting the 1006 root-cause (previous entry was wrong)
+The process-shim patch was a NO-OP: esm.sh's /node/process.mjs defines
+`get release(){return {}}`, so process.release.name is undefined (not "node")
+→ isNode() was ALREADY false → the SDK was ALREADY on its browser path,
+appending the tunnel token as a WebSocket subprotocol (correct mechanism).
+The "Authorization: tunnel <...>" log line is an UNCONDITIONAL trace, not proof
+of the node branch. So the 1006 is a SERVER-SIDE handshake rejection by the
+relay, cause not isolated:
+- Origin-for-a-valid-tunnel NOT ruled out (the earlier bogus-tunnel probe 404s
+  before any origin/auth check).
+- Could also be a subprotocol/version detail (SDK offers
+  "tunnel-relay-client-v2-dev").
+Blocked from the definitive live handshake test: the stored Codespaces token now
+returns 401 (rotated). Removed the inert patch. Next: either confirm origin via
+a local (file://, Origin: null) handshake test, or make D robust by proxying the
+relay WebSocket THROUGH the worker (server-side connect: no browser origin, can
+set the auth header; SSH stays end-to-end encrypted so the worker sees only
+ciphertext).

@@ -230,27 +230,10 @@ async function loadSdk() {
   const cv = cfg.connectionsVersion || "1.3.50";
   const sv = cfg.sshVersion || "3.12.36";
   const base = "https://esm.sh/@microsoft";
-  // esm.sh's node `process` shim reports release.name === "node", which makes
-  // dev-tunnels' isNode() true. That routes relay auth through an Authorization
-  // header the browser silently drops (relay closes with 1006). Neutralize the
-  // marker on the SHARED process module singleton so isNode() is false and the
-  // SDK takes its browser path — which appends the tunnel token as a WebSocket
-  // subprotocol (the mechanism the browser actually allows).
-  try {
-    const pm = await import(/* @vite-ignore */ "https://esm.sh/node/process.mjs");
-    const proc = pm.default ?? pm;
-    if (proc && proc.release && proc.release.name === "node") {
-      try { proc.release.name = "browser"; } catch { /* frozen */ }
-      if (proc.release.name === "node") {
-        try { proc.release = { ...proc.release, name: "browser" }; } catch { /* ignore */ }
-      }
-    }
-    log(`env: process.release.name=${proc?.release?.name ?? "(none)"} (isNode→${proc?.release?.name === "node"})`);
-  } catch (e) {
-    log(`env patch skipped: ${e.message}`, "error");
-  }
-  // esm.sh serves these as browser ESM and polyfills the node builtins
-  // (buffer/crypto/process/stream) the SSH stack uses.
+  // Note: the SDK already runs its BROWSER path here (isNode() is false because
+  // esm.sh's process shim reports release === {}), so the tunnel token is sent
+  // as a WebSocket subprotocol — the correct browser mechanism. The relay still
+  // closes the handshake (1006); cause is server-side, not the code path.
   const [connections, ssh] = await Promise.all([
     import(/* @vite-ignore */ `${base}/dev-tunnels-connections@${cv}`),
     import(/* @vite-ignore */ `${base}/dev-tunnels-ssh@${sv}`),
