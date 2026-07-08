@@ -65,9 +65,6 @@ function token() {
 function haveToken() {
   return !!token();
 }
-function refreshLaunchEnabled() {
-  els.launch.disabled = !haveToken();
-}
 
 // ---- Auth mode toggle -----------------------------------------------------
 function selectMode(mode) {
@@ -76,11 +73,9 @@ function selectMode(mode) {
   els.tabOauth.setAttribute("aria-selected", String(mode === "oauth"));
   els.panePat.classList.toggle("hidden", mode !== "pat");
   els.paneOauth.classList.toggle("hidden", mode !== "oauth");
-  refreshLaunchEnabled();
 }
 els.tabPat.addEventListener("click", () => selectMode("pat"));
 els.tabOauth.addEventListener("click", () => selectMode("oauth"));
-els.token.addEventListener("input", refreshLaunchEnabled);
 
 // ---- OAuth (PKCE) — same design as frontend-oauth -------------------------
 function base64url(bytes) {
@@ -138,7 +133,6 @@ async function handleOAuthCallback(code, returnedState) {
     const me = await gh("/user");
     els.whoami.textContent = `@${me.login}`;
     setStatus(`signed in as ${me.login}`);
-    refreshLaunchEnabled();
   } catch (err) {
     setStatus(`Sign-in failed: ${err.message}`);
   }
@@ -149,7 +143,6 @@ els.logout.addEventListener("click", () => {
   els.login.classList.remove("hidden");
   els.logout.classList.add("hidden");
   els.whoami.textContent = "";
-  refreshLaunchEnabled();
   setStatus("signed out");
 });
 
