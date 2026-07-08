@@ -359,3 +359,23 @@ unit-tested in Node before integration.
   stream to 16634, live agent gRPC, second SSH, shell — needs live iterations).
 Next brick: http2.js (frames) + hpack.js (literal encode + Huffman decode),
 the crux; then the agent service/field reverse-engineering and integration.
+
+## note — MS Learn confirms browsers can't call gRPC directly (bears on C)
+learn.microsoft.com/aspnet/core/grpc/browser: "It's not possible to directly
+call a gRPC service from a browser. gRPC uses HTTP/2 features, and no browser
+provides the level of control required over web requests to support a gRPC
+client." The two browser-compatible escapes both need SERVER support:
+- gRPC-Web: different wire protocol, HTTP/1.1-friendly — but requires the server
+  (or an Envoy-style proxy) to speak gRPC-Web. The codespace agent is raw
+  grpc-go; it does NOT expose gRPC-Web.
+- gRPC JSON transcoding: needs .proto HTTP annotations on the server. Not present.
+Nuance for Variant C: that statement is about the browser's fetch/XHR HTTP
+client. Variant C does NOT use fetch — it writes raw bytes over a WebSocket to
+our worker, which pipes them to the tunnel-forwarded port 16634. Over a raw
+duplex byte stream we control every byte, so we CAN implement HTTP/2 ourselves
+(that's what the http2.js/hpack.js bricks are for). So the page does not make C
+impossible — but it authoritatively confirms C means hand-implementing the
+HTTP/2 stack that browsers deliberately don't expose, and that the easy escapes
+(gRPC-Web/transcoding) don't apply because the agent doesn't support them.
+Decision stands with the user: continue C (huge, browser HTTP/2 from scratch) or
+use a Node/Go host (A) where gRPC is trivial.
