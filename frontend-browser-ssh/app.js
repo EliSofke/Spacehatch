@@ -193,9 +193,16 @@ async function gh(path, init = {}) {
   if (res.status === 204) return {};
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    if (res.status === 401) throw new Error("token invalid or expired");
-    if (res.status === 403) throw new Error("forbidden — token needs Codespaces write");
-    throw new Error(body.message || `GitHub API ${res.status}`);
+    if (res.status === 401) throw new Error("token invalid or expired — paste a current GitHub token");
+    if (res.status === 403) throw new Error("forbidden — the token needs Codespaces write permission");
+    if (res.status === 404) {
+      throw new Error(
+        "404 on " + path + " — GitHub returns this when the token can't access " +
+        "Codespaces for the repo. Use a token with Codespaces (read and write) " +
+        "permission and access to owner/repo, and check owner/repo are correct.",
+      );
+    }
+    throw new Error(body.message ? `GitHub API ${res.status}: ${body.message}` : `GitHub API ${res.status}`);
   }
   return body;
 }
