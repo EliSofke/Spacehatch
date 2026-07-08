@@ -39,9 +39,61 @@ function json(body, status, env) {
   });
 }
 
+function ghCorsHeaders(env) {
+  return {
+    "Access-Control-Allow-Origin": env.ALLOWED_ORIGIN,
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Authorization, Accept, Content-Type, X-GitHub-Api-Version",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin",
+  };
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+
+    // ---- /gh-api/<path> : GitHub REST API proxy ------------------------------
+    //   The browser cannot call api.github.com directly (no CORS) and cannot set
+    //   a User-Agent (a forbidden header GitHub requires). The caller supplies
+    //   its own bearer token; the worker only relays it and injects User-Agent.
+    if (url.pathname.startsWith("/gh-api/")) {
+      if (request.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: ghCorsHeaders(env) });
+      }
+      const ghOrigin = request.headers.get("Origin");
+      if (ghOrigin && ghOrigin !== env.ALLOWED_ORIGIN) {
+        return new Response("forbidden origin", { status: 403 });
+      }
+      const ghPath = url.pathname.slice("/gh-api/".length);
+      const target = "https://api.github.com/" + ghPath + url.search;
+      const fwd = new Headers();
+      const auth = request.headers.get("Authorization");
+      if (auth) fwd.set("Authorization", auth);
+      fwd.set("Accept", request.headers.get("Accept") || "application/vnd.github+json");
+      fwd.set("User-Agent", "spacehatch-gh-wasm");
+      fwd.set("X-GitHub-Api-Version", request.headers.get("X-GitHub-Api-Version") || "2022-11-28");
+      const ct = request.headers.get("Content-Type");
+      if (ct) fwd.set("Content-Type", ct);
+      const hasBody = request.method !== "GET" && request.method !== "HEAD";
+      let upstream;
+      try {
+        upstream = await fetch(target, {
+          method: request.method,
+          headers: fwd,
+          body: hasBody ? request.body : undefined,
+        });
+      } catch (e) {
+        return new Response("upstream error: " + e.message, { status: 502, headers: ghCorsHeaders(env) });
+      }
+      const respHeaders = new Headers(ghCorsHeaders(env));
+      respHeaders.set("Content-Type", upstream.headers.get("Content-Type") || "application/json");
+      for (const h of ["X-RateLimit-Remaining", "X-RateLimit-Limit", "Link"]) {
+        const v = upstream.headers.get(h);
+        if (v) respHeaders.set(h, v);
+      }
+      return new Response(upstream.body, { status: upstream.status, headers: respHeaders });
+    }
 
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders(env) });

@@ -21,3 +21,10 @@ frontend-browser-ssh/vendor/
 frontend-browser-ssh/bundle-src/
 test/node_modules/
 node_modules/
+
+# gh-in-WASM build artifacts (built in CI from gh-wasm-src/ via gh-wasm.yml)
+frontend-gh-wasm/gh.wasm
+frontend-gh-wasm/wasm_exec.js
+
+# Assembled Pages site (built in CI by pages.yml)
+_site/
