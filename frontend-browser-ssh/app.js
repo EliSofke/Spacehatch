@@ -317,23 +317,85 @@ async function connectTerminal(name, term) {
   // stream authenticated with a generated key registered via the codespace
   // SSH-key header). Encapsulated here on purpose.
   setStatus("relay connected — opening shell …", true);
-  await bindShell(client, term);
+  await bindShell(client, term, ssh);
   setConnected(true, `connected · ${name}`);
   setStatus("live", true);
 }
 
 /**
- * Bind an interactive shell channel to xterm. Isolated so the SSH-channel
- * specifics are the only thing to finalize during live validation.
+ * Variant C: get a bare shell with zero codespace-side artifacts.
+ *  8a) open a stream to the agent's internal gRPC port (16634), call
+ *      StartRemoteServerAsync(publicKey) → {port, user}  [the big live test]
+ *  8b) open a stream to that port, run a second SSH session authenticated with
+ *      our key as `user`, request a pty + shell, and bind it to xterm.
+ * Heavy logging on purpose: the first live run should pinpoint any gap.
  */
-async function bindShell(client, term) {
-  // Placeholder wiring: forward xterm input to the channel and channel output
-  // to xterm once the forwarded SSH stream is obtained from `client`.
-  // Left as the single explicit integration point for the live spike.
-  throw new Error(
-    "SSH channel binding pending live validation — REST + relay path is wired; " +
-    "confirm the forwarded-shell accessor against a running codespace in a browser.",
-  );
+async function bindShell(client, term, ssh) {
+  const AGENT_PORT = 16634;
+  const b64 = (u8) => { let s = ""; const a = u8 instanceof Uint8Array ? u8 : new Uint8Array(u8); for (const b of a) s += String.fromCharCode(b); return btoa(s); };
+  const toU8 = (d) => (d instanceof Uint8Array ? d : d && d.buffer ? new Uint8Array(d.buffer, d.byteOffset || 0, d.byteLength) : new Uint8Array(d));
+  const toBuf = (u8) => (typeof Buffer !== "undefined" ? Buffer.from(u8) : u8);
+  const streamAPI = (s) => { const p = s && Object.getPrototypeOf(s); return p ? Object.getOwnPropertyNames(p).filter((n) => typeof s[n] === "function").slice(0, 24).join(",") : typeof s; };
+  const openForwarded = async (port) => {
+    try { await client.waitForForwardedPort(port); } catch (e) { log(`waitForForwardedPort(${port}) note: ${e.message}`); }
+    return client.connectToForwardedPort(port);
+  };
+  const wireStream = (stream, onBytes) => {
+    if (typeof stream.on === "function") stream.on("data", (d) => onBytes(toU8(d)));
+    else if (typeof stream.addEventListener === "function") stream.addEventListener("data", (e) => onBytes(toU8(e.data)));
+    else log("stream has no on()/addEventListener() — check streamAPI log", "error");
+    return (bytes) => stream.write(toBuf(bytes));
+  };
+
+  const { GrpcConnection } = await import("./grpc/client.js");
+  const { startRemoteServer } = await import("./grpc/agent.js");
+
+  // ---- key: generate in the SDK so the SAME key registers + authenticates ---
+  const alg = ssh.SshAlgorithms.publicKey.ecdsaSha2Nistp256;
+  log("generating ECDSA P-256 keypair in the SDK …");
+  const keyPair = await alg.generateKeyPair();
+  const pubBytes = toU8(await keyPair.getPublicKeyBytes(alg.ecdsaSha2Nistp256 || undefined));
+  const openssh = `ecdsa-sha2-nistp256 ${b64(pubBytes)} spacehatch`;
+  log(`public key ready (${openssh.slice(0, 48)}…)`);
+
+  // ---- 8a: gRPC StartRemoteServerAsync over forwarded port 16634 ------------
+  setStatus("starting SSH server via agent (gRPC) …", true);
+  log(`connecting to forwarded agent port ${AGENT_PORT} …`);
+  const agentStream = await openForwarded(AGENT_PORT);
+  log(`agentStream API: ${streamAPI(agentStream)}`);
+  const conn = new GrpcConnection(wireStream(agentStream, (u8) => conn.feed(u8)), { authority: "codespace-internal" });
+  log("calling StartRemoteServerAsync …");
+  const { port, user } = await startRemoteServer(conn, openssh);
+  log(`StartRemoteServer OK → sshPort=${port} user=${user}`, "ok");
+  term.write(`\r\n\x1b[32m[spacehatch] agent started SSH server on port ${port} as ${user}\x1b[0m\r\n`);
+
+  // ---- 8b: second SSH session → pty + shell → xterm (live frontier) ---------
+  setStatus("opening SSH session …", true);
+  log(`connecting to forwarded ssh port ${port} …`);
+  const sshStream = await openForwarded(port);
+  log(`sshStream API: ${streamAPI(sshStream)}`);
+  const config = new ssh.SshSessionConfiguration();
+  const session = new ssh.SshClientSession(config);
+  log(`session API: ${streamAPI(session)}`);
+  await session.connect(sshStream);
+  log("second SSH transport connected — authenticating …");
+  const credentials = { username: user, publicKeys: [keyPair] };
+  const authed = await session.authenticate(credentials);
+  log(`authenticate → ${authed}`);
+  if (!authed) throw new Error("second SSH authentication failed");
+
+  const channel = await session.openChannel();
+  log(`channel API: ${streamAPI(channel)}`);
+  // pty + shell requests; exact request helpers vary — try common shapes.
+  const cols = term.cols || 80, rows = term.rows || 24;
+  if (typeof channel.requestTerminal === "function") await channel.requestTerminal("xterm-256color", cols, rows);
+  else log("channel.requestTerminal not present — see channel API log", "error");
+  if (typeof channel.requestShell === "function") await channel.requestShell();
+  else log("channel.requestShell not present — see channel API log", "error");
+
+  const chanSend = wireStream(channel, (u8) => term.write(toU8(u8)));
+  term.onData((data) => chanSend(new TextEncoder().encode(data)));
+  log("shell bound to xterm", "ok");
 }
 
 // ---- Launch ---------------------------------------------------------------

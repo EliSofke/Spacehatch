@@ -442,3 +442,23 @@ parse, success + failure paths, service/method constants).
 Remaining: brick 8 — second SSH session (auth as User with our ed25519 key) +
 pty/shell → xterm, and the live wiring (SDK stream to 16634 → GrpcConnection →
 startRemoteServer → SDK stream to ServerPort → SSH → shell). Live-only.
+
+## spike — Variant C: brick 5→ECDSA + brick 8 wiring (live frontier)
+SDK finding: dev-tunnels-ssh supports rsa + ecdsa (nistp256/384/521), NOT
+ed25519. So the SSH key must be ecdsa. openssh.js gained ecdsaP256PublicKeyTo
+OpenSSH + parseOpenSSHEcdsa + generateEcdsaP256Key (tested vs an independent
+construction, 3/3). For a coherent end-to-end the key is generated INSIDE the
+SDK (SshAlgorithms.publicKey.ecdsaSha2Nistp256.generateKeyPair →
+getPublicKeyBytes) so the same key registers with the agent and signs the SSH
+auth.
+app.js bindShell now wires the full pipeline with heavy diagnostics:
+ 8a) connectToForwardedPort(16634) → GrpcConnection → StartRemoteServerAsync
+     (openssh pubkey) → {port,user}  [the decisive live test of browser gRPC vs
+     the real agent]
+ 8b) connectToForwardedPort(port) → SshClientSession.connect → authenticate
+     {username:user, publicKeys:[keyPair]} → openChannel → requestTerminal +
+     requestShell → xterm.
+The stream/session/channel API surface is logged on first run (streamAPI helper)
+because the ssh bundle is partly minified; 8b request helper names
+(requestTerminal/requestShell) are best-effort and may need adjustment from the
+first live log. 8a should be solid (bricks 1–7 verified). Live-only from here.
