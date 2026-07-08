@@ -1,0 +1,3 @@
+# CI-built (see ssh-wasm-src/build.sh + pages.yml)
+spacehatch-ssh.wasm
+wasm_exec.js

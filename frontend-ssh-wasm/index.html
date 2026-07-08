@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Spacehatch — SSH (canonical Go transport)</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #0b0e14; color: #d7dae0; }
+    header { padding: 10px 14px; background: #11151f; border-bottom: 1px solid #222; }
+    header b { color: #7aa2f7; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 10px 14px; }
+    input { background: #0b0e14; color: #d7dae0; border: 1px solid #333; border-radius: 6px; padding: 6px 8px; font: inherit; }
+    input#token { flex: 1 1 320px; }
+    button { background: #7aa2f7; color: #0b0e14; border: 0; border-radius: 6px; padding: 7px 14px; font: inherit; font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: default; }
+    #term { height: 62vh; padding: 6px 10px; }
+    #log { max-height: 22vh; overflow: auto; padding: 6px 14px; font-size: 12px; color: #9aa0ac; border-top: 1px solid #222; white-space: pre-wrap; }
+    #log .error { color: #f7768e; }
+  </style>
+</head>
+<body>
+  <header><b>Spacehatch</b> — SSH terminal over a single Go/WASM transport (dev-tunnels + grpc-go + x/crypto/ssh)</header>
+  <div class="row">
+    <input id="token" type="password" placeholder="GitHub token (Codespaces read/write)" autocomplete="off" />
+  </div>
+  <div class="row">
+    <input id="owner" placeholder="owner" size="14" />
+    <input id="repo" placeholder="repo" size="18" />
+    <button id="connect">Connect</button>
+    <span id="status"></span>
+  </div>
+  <div id="term"></div>
+  <div id="log"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script>
+    // Optional deploy-time config (workerUrl, owner, repo). Pages injects this.
+    window.SPACEHATCH_D_CONFIG = window.SPACEHATCH_D_CONFIG || {
+      workerUrl: "https://spacehatch-auth.eli-sofke.workers.dev",
+      owner: "EliSofke",
+      repo: "Spacehatch"
+    };
+  </script>
+  <script src="./wasm_exec.js"></script>
+  <script type="module" src="./boot.js"></script>
+</body>
+</html>
