@@ -423,3 +423,22 @@ it never surfaced). Factored the mock into grpc/mock-server.js (MockGrpcServer)
 that skips PREFACE.length bytes first, used by BOTH the Node test and the
 self-test page. Added a Node loopback case so this path is covered without a
 browser. Node suites: grpc 12/12, protocol 13/13, client 6/6.
+
+## spike — Variant C: brick 7 done, agent contract nailed from cli/cli source
+Downloaded cli/cli v2.83.2 and read
+internal/codespaces/rpc/ssh/ssh_server_host_service.v1.proto + invoker.go:
+- service: Codespaces.Grpc.SshServerHostService.v1.SshServerHost
+- method:  StartRemoteServerAsync
+  path:    /Codespaces.Grpc.SshServerHostService.v1.SshServerHost/StartRemoteServerAsync
+- StartRemoteServerRequest  { string UserPublicKey = 1 }
+- StartRemoteServerResponse { bool Result = 1; string ServerPort = 2;
+                              string User = 3; string Message = 4 }
+- transport: INSECURE (insecure.NewCredentials()) = plaintext h2c, no TLS/mTLS
+  → matches our GrpcConnection exactly. Agent on internal port 16634.
+- gh then forwards ServerPort and SSHes as User with the ed25519 private key.
+grpc/agent.js encodes/decodes these + startRemoteServer(conn, pubkey) →
+{port, user}. grpc/agent.test.mjs 6/6 over the loopback (req field 1, response
+parse, success + failure paths, service/method constants).
+Remaining: brick 8 — second SSH session (auth as User with our ed25519 key) +
+pty/shell → xterm, and the live wiring (SDK stream to 16634 → GrpcConnection →
+startRemoteServer → SDK stream to ServerPort → SSH → shell). Live-only.

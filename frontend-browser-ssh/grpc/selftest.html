@@ -39,6 +39,7 @@
     import { ed25519PublicKeyToOpenSSH, parseOpenSSHEd25519, generateEd25519Key } from "./openssh.js";
     import { GrpcConnection } from "./client.js";
     import { MockGrpcServer } from "./mock-server.js";
+    import { startRemoteServer, SSH_SERVICE, START_REMOTE_SERVER } from "./agent.js";
 
     const rows = document.getElementById("rows");
     const summary = document.getElementById("summary");
@@ -133,6 +134,23 @@
         const r = new Reader(message); const out = {};
         while (!r.eof) { const { field, wireType } = r.tag(); if (field === 1) out.msg = r.string(); else if (field === 2) out.n = r.uint32(); else r.skip(wireType); }
         eq(out, { msg: "hello, browser", n: 4242 }, "unary call resolves with echoed message");
+      }
+
+      group("agent StartRemoteServerAsync (brick 7)");
+      {
+        // The exact codespace-agent contract, over the loopback: our request
+        // must carry UserPublicKey at field 1; we parse ServerPort + User back.
+        let seenKey = null, server;
+        const conn = new GrpcConnection((b) => server.feed(b), { authority: "codespace-internal" });
+        server = new MockGrpcServer((b) => conn.feed(b), (reqMsg) => {
+          const r = new Reader(reqMsg);
+          while (!r.eof) { const { field, wireType } = r.tag(); if (field === 1) seenKey = r.string(); else r.skip(wireType); }
+          return new Writer().bool(1, true).string(2, "2222").string(3, "codespace").finish();
+        });
+        const { port, user } = await startRemoteServer(conn, "ssh-ed25519 KEYDATA me@spacehatch");
+        eq({ port, user }, { port: 2222, user: "codespace" }, "returns parsed port + user");
+        eq(seenKey, "ssh-ed25519 KEYDATA me@spacehatch", "agent received our public key");
+        eq([SSH_SERVICE, START_REMOTE_SERVER], ["Codespaces.Grpc.SshServerHostService.v1.SshServerHost", "StartRemoteServerAsync"], "service/method path");
       }
     } catch (e) {
       fail++;
