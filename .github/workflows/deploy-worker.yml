@@ -1,0 +1,28 @@
+name: deploy-worker
+
+# One-time worker deploy without local tooling.
+# Prerequisites (add once under Settings → Secrets and variables → Actions):
+#   CLOUDFLARE_API_TOKEN  — a Cloudflare API token with "Edit Workers" permission
+#   CLOUDFLARE_ACCOUNT_ID — your Cloudflare account id
+# For the OAuth option, also add the worker secrets after the first deploy:
+#   npx wrangler secret put GITHUB_CLIENT_ID
+#   npx wrangler secret put GITHUB_CLIENT_SECRET
+# (or set them in the Cloudflare dashboard). The /tunnel route needs no secrets.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["auth-worker/**", ".github/workflows/deploy-worker.yml"]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy worker to Cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: auth-worker
