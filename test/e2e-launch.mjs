@@ -72,33 +72,48 @@ try {
 
   if (outcome === "shell") {
     console.log("\n✓ shell bound — probing read/write …");
-    await sleep(2000);
+    await sleep(2500);
     const readBuf = () => page.evaluate(() => window.__shellOut || "").catch(() => "");
     const before = await readBuf();
-    console.log("READ buffer so far (tail):\n" + before.split("\n").filter(Boolean).slice(-6).join("\n"));
-    const readOk = /Welcome to Ubuntu|@|\$|~/.test(before);
+    const readOk = /Welcome to Ubuntu|@|\$|~|➜/.test(before);
 
-    const marker = "SPACEHATCH_MARKER_42";
-    const waitMarker = async (label) => {
-      for (let i = 0; i < 15; i++) { await sleep(1000); if ((await readBuf()).includes(marker)) { console.log(`  ✓ marker via ${label}`); return true; } }
+    const typeCmd = async (cmd) => {
+      await page.evaluate(() => { try { window.__term && window.__term.focus(); } catch {} });
+      await page.locator(".xterm-screen").click().catch(() => {});
+      await page.locator(".xterm-helper-textarea").focus().catch(() => {});
+      // insertText fires a single input event (no keydown/keypress), avoiding
+      // the double-char dispatch seen with keyboard.type() in headless xterm.
+      await page.keyboard.insertText(cmd);
+      await page.keyboard.press("Enter");
+    };
+    const waitFor = async (needle, secs = 15) => {
+      for (let i = 0; i < secs; i++) { await sleep(1000); if ((await readBuf()).includes(needle)) return true; }
       return false;
     };
-    // Real path: type into the xterm textarea.
-    await page.click("#terminal").catch(() => {});
-    await page.locator(".xterm-helper-textarea").focus().catch(() => {});
-    await page.keyboard.type(PROBE_CMD);
-    await page.keyboard.press("Enter");
-    let writeOk = await waitMarker("keyboard");
-    // Fallback: inject directly over the channel to isolate keyboard vs pipe.
-    if (!writeOk) {
-      console.log("  (keyboard path no marker — trying direct channel send)");
-      await page.evaluate((c) => window.__shellSend && window.__shellSend(c + "\n"), PROBE_CMD);
-      writeOk = await waitMarker("channel");
+
+    // 1) Real keyboard path (xterm → term.onData → channel). Also verify the
+    // echoed command is NOT doubled (regression guard for double-wiring).
+    await typeCmd("echo NODUP_$((40+7))");
+    let kbOk = await waitFor("NODUP_47", 12);
+    const bufK = await readBuf();
+    const doubled = /NNOODDUUPP|eecchhoo|NODUP_4477/.test(bufK);
+    if (!kbOk) { // fallback: direct channel inject, to isolate keyboard vs pipe
+      await page.evaluate(() => window.__shellSend && window.__shellSend("echo CH_$((3*3))_OK\n"));
+      var chOk = await waitFor("CH_9_OK", 12);
     }
+
+    // 2) Stability: hold the session, then run another command after a pause.
+    console.log("  holding session 45s to check relay stability (DO) …");
+    await sleep(45000);
+    const stillConnected = await page.evaluate(() => /connected|live|shell/.test(document.querySelector("#log")?.textContent.slice(-4000) || "") && !/Launch failed|disconnected/.test((document.querySelector(".bezel-title")?.textContent || "")));
+    await typeCmd("echo STABLE_$((10+11))");
+    const stableOk = await waitFor("STABLE_21", 15) || (await page.evaluate(() => { window.__shellSend && window.__shellSend("echo STABLE2_$((10+11))\n"); }), await waitFor("STABLE2_21", 12));
+
     const after = await readBuf();
-    console.log("--- terminal buffer after probe (tail) ---\n" + after.split("\n").filter(Boolean).slice(-14).join("\n"));
-    console.log(`\nREAD ok: ${readOk} | WRITE round-trip (${marker}) ok: ${writeOk}`);
-    console.log(writeOk ? "\n★ INTERACTIVE SHELL CONFIRMED (read+write)" : "\n△ shell bound but write round-trip not confirmed");
+    console.log("--- terminal buffer (tail, control chars stripped) ---\n" +
+      after.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "").split("\n").filter((l) => l.trim()).slice(-14).join("\n"));
+    console.log(`\nREAD ok: ${readOk} | keyboard write: ${kbOk} | char-doubling: ${doubled} | channel write: ${kbOk ? "n/a" : !!chOk} | STABLE after 45s: ${stableOk}`);
+    console.log((readOk && (kbOk || chOk) && stableOk && !doubled) ? "\n★★ FULLY STABLE INTERACTIVE TERMINAL (read+write, no doubling, survives 45s)" : "\n△ partial — see flags above");
   }
 
   console.log("\n===== FINAL LOG (relay:verbose filtered) =====");

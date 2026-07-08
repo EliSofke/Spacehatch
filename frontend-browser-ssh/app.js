@@ -526,11 +526,14 @@ async function bindShell(client, term, ssh, tp) {
   }
   term.onData((data) => { try { channel.send(toBuf(new TextEncoder().encode(data))); } catch (e) { log(`shell send: ${e.message}`); } });
 
-  // Wire the shell channel to xterm.
-  if (typeof channel.onDataReceived === "function") {
-    channel.onDataReceived((d) => { const u8 = toU8(d); term.write(u8); if (typeof channel.adjustWindow === "function") channel.adjustWindow(u8.length); });
-  }
-  term.onData((data) => { try { channel.send(toBuf(new TextEncoder().encode(data))); } catch (e) { log(`shell send: ${e.message}`); } });
+  // Keep the remote pty's size in sync with xterm (RFC 4254 §6.7 window-change).
+  const WindowChange = class extends ssh.ChannelRequestMessage {
+    constructor(c, r) { super("window-change", false); this._c = c; this._r = r; }
+    onWrite(w) { super.onWrite(w); w.writeUInt32(this._c); w.writeUInt32(this._r); w.writeUInt32(0); w.writeUInt32(0); }
+  };
+  const sendResize = () => { try { channel.request(new WindowChange(term.cols || 80, term.rows || 24)); } catch { /* */ } };
+  if (typeof term.onResize === "function") term.onResize(() => sendResize());
+  window.addEventListener("resize", () => { try { fitAddon && fitAddon.fit(); } catch { /* */ } });
   setConnected(true, `shell · ${user}`);
   log("shell bound to xterm — you're in", "ok");
 }
