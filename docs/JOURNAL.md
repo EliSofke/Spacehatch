@@ -325,3 +325,23 @@ verifiable in a live browser+codespace. Ports 16634/16635 in the forward list
 are likely the internal control/RPC ports.
 Pragmatic alternative for bridge-carrying repos: connectToForwardedPort(7681)
 → our in-codespace xterm bridge (working terminal now, but not bare-repo).
+
+## blocker — the codespace agent RPC is gRPC, not JSON-RPC
+Correcting the previous bindShell plan: the StartSSHServer RPC runs over gRPC
+(HTTP/2 + protobuf) on the codespace's internal port 16634. Confirmed by cli/cli
+issue #11206 ("forward the codespaces internal port (16634) ... to connect via
+GRPC") and PR #6657 (Live Share RPC → gRPC server). Implication: a browser-only
+bare-repo shell would require a gRPC/HTTP/2 client speaking raw gRPC over a raw
+tunnel duplex stream (connectToForwardedPort(16634)). That is not practically
+implementable in the browser: gRPC-web needs a server-side gRPC-web proxy the
+agent doesn't provide, and raw gRPC needs full HTTP/2 framing over the stream.
+16634 is a private internal port (not exposed via app.github.dev), so fetch/
+gRPC-web can't reach it either.
+=> The corner "browser-only + bare-repo + own-terminal" is blocked by the gRPC
+   agent requirement. gh can do it (native Go gRPC stack); a browser cannot.
+Achievable instead:
+- own-terminal + browser-only + repo-with-bridge  = Variant B / E+B (built)
+- own-terminal + bare-repo + server component (gRPC) = Variant A (built)
+- browser-only + bare-repo + VS Code/Jupyter terminal = Variant E (built)
+Pragmatic terminal over the proven transport: connectToForwardedPort(7681) →
+in-codespace bridge (needs the bridge in the repo).
