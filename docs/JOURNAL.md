@@ -487,3 +487,19 @@ Fix: GrpcConnection.call now takes a metadata object; agent.js sends
 { authorization: "Bearer token" } (AGENT_METADATA). mock-server captures request
 headers; agent.test asserts the header is sent. Suites: 12/13/6/7 green.
 This should clear the 401 → StartRemoteServerAsync should return {port,user}.
+
+## MILESTONE — 8a fully proven: browser gRPC → real agent → valid response
+Live: the auth header cleared the 401. The agent (Kestrel/ASP.NET Core) executed
+StartRemoteServerAsync and returned a real StartRemoteServerResponse with
+Result=false, Message="Please check if an SSH server is installed in the
+container…". So our hand-rolled browser gRPC stack (HTTP/2+HPACK+protobuf+auth)
+works end-to-end against the real codespace agent. "Browsers can't do gRPC" is
+refuted for our raw-stream path.
+The failure is CONFIG, not code: Spacehatch's own devcontainer uses
+mcr.microsoft.com/devcontainers/typescript-node:22, which has no sshd. GitHub
+docs: "The default dev container image includes an SSH server, which is started
+automatically." So a truly BARE repo (no .devcontainer → universal image) has
+sshd and StartRemoteServer would return {port,user}. This vindicates Variant C's
+bare-repo thesis. Next: test against a bare repo (no devcontainer) → expect
+StartRemoteServer OK → then 8b (second SSH + shell). Alternatively add
+ghcr.io/devcontainers/features/sshd:1 to a custom devcontainer.
