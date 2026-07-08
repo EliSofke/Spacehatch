@@ -376,8 +376,8 @@ async function bindShell(client, term, ssh) {
     return () => {};
   };
 
-  const { GrpcConnection } = await import("./grpc/client.js");
-  const { startRemoteServer } = await import("./grpc/agent.js");
+  const { GrpcConnection } = await import(`./grpc/client.js?v=${BUILD.split(" ")[0]}`);
+  const { startRemoteServer } = await import(`./grpc/agent.js?v=${BUILD.split(" ")[0]}`);
 
   // ---- key: generate in the SDK so the SAME key registers + authenticates ---
   const alg = ssh.SshAlgorithms.publicKey.ecdsaSha2Nistp256;

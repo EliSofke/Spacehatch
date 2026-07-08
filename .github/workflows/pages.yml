@@ -25,8 +25,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Stamp build version into app.js
         run: |
-          STAMP="${GITHUB_SHA:0:7} $(date -u +%Y-%m-%dT%H:%MZ)"
+          SHA="${GITHUB_SHA:0:7}"
+          STAMP="${SHA} $(date -u +%Y-%m-%dT%H:%MZ)"
           sed -i "s|__BUILD_SHA__|${STAMP}|g" frontend-browser-ssh/app.js
+          # Cache-bust the grpc ES module graph: version every relative import.
+          find frontend-browser-ssh/grpc -name '*.js' -exec \
+            sed -i "s|from \"\(\./[A-Za-z0-9_-]*\.js\)\"|from \"\1?v=${SHA}\"|g" {} +
           echo "stamped build: ${STAMP}"
           grep -n 'const BUILD' frontend-browser-ssh/app.js
       - uses: actions/configure-pages@v5
