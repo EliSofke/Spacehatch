@@ -454,29 +454,57 @@ async function bindShell(client, term, ssh, tp) {
   }
   log(`connecting to forwarded ssh port ${port} (with refreshPorts) …`);
   const sshStream = await openForwarded(port, { refresh: true });
-  log(`sshStream API: ${streamAPI(sshStream)}`);
+  const channel0 = sshStream && sshStream.channel;
+  if (!channel0 || typeof channel0.send !== "function") throw new Error("no usable SshChannel for the ssh port");
+
+  // The SDK session needs an SDK Stream (BaseStream), not the broken Duplex
+  // SshStream. Build one over the channel: feed inbound bytes via the SshStream
+  // push-hijack (SshStream still does adjustWindow), write via channel.send.
+  const ChannelStream = class extends ssh.BaseStream {
+    constructor(ch) { super(); this._ch = ch; }
+    async write(data) { await this._ch.send(toBuf(data)); }
+    async close() { try { await this._ch.close(); } catch { /* */ } this.dispose(); }
+  };
+  const stream = new ChannelStream(channel0);
+  sshStream.push = (chunk) => { if (chunk != null) stream.onData(toBuf(chunk)); return true; };
+
   const config = new ssh.SshSessionConfiguration();
   const session = new ssh.SshClientSession(config);
-  log(`session API: ${streamAPI(session)}`);
-  await session.connect(sshStream);
-  log("second SSH transport connected — authenticating …");
-  const credentials = { username: user, publicKeys: [keyPair] };
-  const authed = await session.authenticate(credentials);
-  log(`authenticate → ${authed}`);
+  // Accept the codespace sshd host key (the tunnel layer is already trusted).
+  if (typeof session.onAuthenticating === "function") {
+    session.onAuthenticating((e) => { try { e.authenticationPromise = Promise.resolve({}); } catch { /* */ } });
+  }
+  log("second SSH: connecting transport …");
+  await session.connect(stream);
+  log("second SSH: authenticating as " + user + " …");
+  const authed = await session.authenticate({ username: user, publicKeys: [keyPair] });
+  log(`second SSH authenticate → ${authed}`, authed ? "ok" : "error");
   if (!authed) throw new Error("second SSH authentication failed");
 
   const channel = await session.openChannel();
-  log(`channel API: ${streamAPI(channel)}`);
-  // pty + shell requests; exact request helpers vary — try common shapes.
+  log(`shell channel opened (${streamAPI(channel)})`);
   const cols = term.cols || 80, rows = term.rows || 24;
-  if (typeof channel.requestTerminal === "function") await channel.requestTerminal("xterm-256color", cols, rows);
-  else log("channel.requestTerminal not present — see channel API log", "error");
-  if (typeof channel.requestShell === "function") await channel.requestShell();
-  else log("channel.requestShell not present — see channel API log", "error");
+  // pty-req (best-effort) then shell, via ChannelRequestMessage.
+  try {
+    const pty = new ssh.ChannelRequestMessage();
+    pty.requestType = "pty-req"; pty.wantReply = true;
+    if ("terminalType" in pty) pty.terminalType = "xterm-256color";
+    if ("columns" in pty) { pty.columns = cols; pty.rows = rows; }
+    const pok = await channel.request(pty);
+    log(`pty-req → ${pok}`);
+  } catch (e) { log(`pty-req not accepted (${e.message}) — continuing without pty`); }
+  const shellReq = new ssh.ChannelRequestMessage();
+  shellReq.requestType = "shell"; shellReq.wantReply = true;
+  const shellOk = await channel.request(shellReq);
+  log(`shell → ${shellOk}`, shellOk ? "ok" : "error");
 
-  const chanSend = wireStream(channel, (u8) => term.write(toU8(u8)));
-  term.onData((data) => chanSend(new TextEncoder().encode(data)));
-  log("shell bound to xterm", "ok");
+  // Wire the shell channel to xterm.
+  if (typeof channel.onDataReceived === "function") {
+    channel.onDataReceived((d) => { const u8 = toU8(d); term.write(u8); if (typeof channel.adjustWindow === "function") channel.adjustWindow(u8.length); });
+  }
+  term.onData((data) => { try { channel.send(toBuf(new TextEncoder().encode(data))); } catch (e) { log(`shell send: ${e.message}`); } });
+  setConnected(true, `shell · ${user}`);
+  log("shell bound to xterm — you're in", "ok");
 }
 
 // ---- Launch ---------------------------------------------------------------

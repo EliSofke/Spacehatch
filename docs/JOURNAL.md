@@ -549,3 +549,16 @@ for the agent-started port before refreshPorts + connect, and logs the API
 status. tp (tunnelProperties, incl. managePortsAccessToken) threaded into
 bindShell. Next live run should show createTunnelPort → api 200 and port 2222
 becoming connectable, then the second SSH session.
+
+## 8b — second SSH session over a channel-backed BaseStream (live frontier)
+Live got all the way to "opened forwarded-tcpip channel #2 for 127.0.0.1:2222"
+then "Failed to read the protocol version" — because we handed the broken-Duplex
+SshStream to session.connect. session.connect needs an SDK Stream (BaseStream),
+which buffers inbound via onData(buf) and reads via read(). Confirmed exports:
+ssh.BaseStream, SshClientSession, SshSessionConfiguration, ChannelRequestMessage,
+ChannelOpenMessage. Rewrote 8b: a ChannelStream extends ssh.BaseStream (write →
+channel.send; inbound fed via the SshStream push-hijack → stream.onData);
+session.onAuthenticating accepts the host key; authenticate({username, publicKeys:
+[keyPair]}); session.openChannel() (defaults to a session channel); pty-req
+(best-effort) + shell via ChannelRequestMessage; channel.onDataReceived → xterm,
+term.onData → channel.send. Live-only; watch for "authenticate → true" then shell.
