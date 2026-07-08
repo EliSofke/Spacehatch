@@ -1,0 +1,42 @@
+name: ssh-wasm
+
+# Build the canonical Go SSH transport (dev-tunnels/go + grpc-go + x/crypto/ssh
+# -> GOOS=js) and run its layer tests, so the 24 MB module is produced by CI
+# instead of committed to git.
+
+on:
+  push:
+    branches: [main]
+    paths: ["ssh-wasm-src/**", "frontend-ssh-wasm/**", ".github/workflows/ssh-wasm.yml"]
+  pull_request:
+    paths: ["ssh-wasm-src/**", "frontend-ssh-wasm/**", ".github/workflows/ssh-wasm.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ssh-wasm-src/go.mod
+          cache-dependency-path: ssh-wasm-src/go.sum
+      - name: Test transport layers (native)
+        run: cd ssh-wasm-src && go test ./agent/ ./tunnel/ ./sshshell/ -timeout 60s
+      - name: Test bridge + agent (js/wasm runtime)
+        run: |
+          cd ssh-wasm-src
+          EXEC="$(go env GOROOT)/lib/wasm/go_js_wasm_exec"
+          GOOS=js GOARCH=wasm go test -exec "$EXEC" ./bridge/ ./agent/ -timeout 60s
+      - name: Build spacehatch-ssh.wasm (-> GOOS=js)
+        run: bash ssh-wasm-src/build.sh
+      - name: Validate the wasm module
+        run: |
+          node -e 'const b=require("fs").readFileSync("frontend-ssh-wasm/spacehatch-ssh.wasm"); if(!WebAssembly.validate(b)){console.error("invalid wasm");process.exit(1);} console.log("valid wasm:",b.length,"bytes")'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spacehatch-ssh-wasm
+          path: |
+            frontend-ssh-wasm/spacehatch-ssh.wasm
+            frontend-ssh-wasm/wasm_exec.js
+          if-no-files-found: error
