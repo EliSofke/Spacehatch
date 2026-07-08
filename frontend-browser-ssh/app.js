@@ -221,11 +221,14 @@ async function fetchTunnelProperties(name) {
 // ---- Browser SSH via Dev Tunnels SDK --------------------------------------
 // Loaded lazily as browser ESM so the page stays static.
 async function loadSdk() {
-  const v = cfg.sdkVersion || "1.1.13";
-  const base = `https://esm.sh/@microsoft`;
+  const cv = cfg.connectionsVersion || "1.3.50";
+  const sv = cfg.sshVersion || "3.12.36";
+  const base = "https://esm.sh/@microsoft";
+  // esm.sh serves these as browser ESM and polyfills the node builtins
+  // (buffer/crypto/process/stream) the SSH stack uses.
   const [connections, ssh] = await Promise.all([
-    import(/* @vite-ignore */ `${base}/dev-tunnels-connections@${v}`),
-    import(/* @vite-ignore */ `${base}/dev-tunnels-ssh@${v}`),
+    import(/* @vite-ignore */ `${base}/dev-tunnels-connections@${cv}`),
+    import(/* @vite-ignore */ `${base}/dev-tunnels-ssh@${sv}`),
   ]);
   return { connections, ssh };
 }
@@ -242,8 +245,9 @@ async function connectTerminal(name, term) {
   log(`tunnelProperties ok: cluster=${tp.clusterId} id=${tp.tunnelId} domain=${tp.domain} (token len=${(tp.connectAccessToken||"").length})`);
 
   setStatus("loading Dev Tunnels SDK …", true);
-  const { connections } = await loadSdk();
-  log(`SDK loaded: TunnelRelayTunnelClient=${typeof connections.TunnelRelayTunnelClient}`);
+  const { connections, ssh } = await loadSdk();
+  log(`SDK loaded: connections[${Object.keys(connections).slice(0,8).join(",")}]`);
+  log(`SDK loaded: ssh[${Object.keys(ssh).filter(k=>/Ssh/.test(k)).slice(0,8).join(",")}]`);
 
   // Build the minimal Tunnel object the client needs from tunnelProperties.
   const tunnel = {

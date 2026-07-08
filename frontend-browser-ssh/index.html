@@ -145,8 +145,10 @@
       repo: "Spacehatch",
       ref: "main",
       idleTimeoutMinutes: 30,
-      // Pinned Dev Tunnels SDK version served as browser ESM:
-      sdkVersion: "1.1.13",
+      // Dev Tunnels SDK: the packages are on separate version lines.
+      // connections 1.3.x pulls ssh 3.12.x; keep them compatible.
+      connectionsVersion: "1.3.50",
+      sshVersion: "3.12.36",
     };
   </script>
   <script type="module" src="app.js"></script>
