@@ -514,3 +514,12 @@ client.isSshSessionActive and retries connectToForwardedPort (6x); the 8a
 StartRemoteServer step retries up to 4x with a fresh stream + a 20s timeout, so
 a mid-call drop is recovered. (Root cause of the ~10s relay drops — possibly the
 plain-Worker WS proxy vs Durable Object — still to investigate separately.)
+
+## fix — worker /relay: keep the invocation alive (ctx.waitUntil) → stop ~10s drops
+Root cause of the periodic "Error reading from stream" tunnel drops: the plain
+Worker's fetch handler returned, and the OUTBOUND relay WebSocket (the fetch
+subrequest webSocket) was torn down shortly after — so the tunnel session died
+every ~10s and had to session-reconnect, and on the fresh universal-image
+codespace it never stabilized. Fix: fetch(request, env, ctx) and
+ctx.waitUntil(done), where `done` resolves when either side closes. This keeps
+the Worker (and the upstream WS) alive for the whole session. Worker tests green.

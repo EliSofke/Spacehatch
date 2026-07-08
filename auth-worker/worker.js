@@ -44,7 +44,7 @@ function json(body, status, env) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     if (request.method === "OPTIONS") {
@@ -117,12 +117,21 @@ export default {
       const safeCode = (c) => (c === 1000 || (c >= 3000 && c <= 4999) ? c : 1000);
       const closeSafely = (ws, c, r) => { try { ws.close(safeCode(c), r ? String(r).slice(0, 120) : undefined); } catch { /* already closed */ } };
 
+      // Keep the Worker invocation (and thus the outbound relay WebSocket)
+      // alive until either side closes. Without this, a plain Worker tears the
+      // upstream WebSocket down shortly after fetch() returns, which showed up
+      // as the tunnel session dropping every ~10s and reconnecting.
+      let resolveDone;
+      const done = new Promise((res) => { resolveDone = res; });
+      const finish = () => { try { resolveDone(); } catch { /* already */ } };
+
       serverSide.addEventListener("message", (e) => { try { upstream.send(e.data); } catch { /* dropped */ } });
       upstream.addEventListener("message", (e) => { try { serverSide.send(e.data); } catch { /* dropped */ } });
-      serverSide.addEventListener("close", (e) => closeSafely(upstream, e.code, e.reason));
-      upstream.addEventListener("close", (e) => closeSafely(serverSide, e.code, e.reason));
-      serverSide.addEventListener("error", () => closeSafely(upstream, 1011));
-      upstream.addEventListener("error", () => closeSafely(serverSide, 1011));
+      serverSide.addEventListener("close", (e) => { closeSafely(upstream, e.code, e.reason); finish(); });
+      upstream.addEventListener("close", (e) => { closeSafely(serverSide, e.code, e.reason); finish(); });
+      serverSide.addEventListener("error", () => { closeSafely(upstream, 1011); finish(); });
+      upstream.addEventListener("error", () => { closeSafely(serverSide, 1011); finish(); });
+      if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(done);
 
       const negotiated = upstreamResp.headers.get("Sec-WebSocket-Protocol") || "tunnel-relay-client-v2-dev";
       return new Response(null, {
