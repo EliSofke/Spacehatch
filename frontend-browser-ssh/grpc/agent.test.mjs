@@ -44,6 +44,7 @@ await (async () => {
   const { port, user } = await startRemoteServer(conn, "ssh-ed25519 KEYDATA me@spacehatch");
   eq({ port, user }, { port: 2222, user: "codespace" }, "startRemoteServer returns parsed port + user");
   eq(seenKey, "ssh-ed25519 KEYDATA me@spacehatch", "agent received our public key");
+  eq(server.lastHeaders && server.lastHeaders.authorization, "Bearer token", "sends Authorization: Bearer token metadata");
   eq([SSH_SERVICE, START_REMOTE_SERVER], ["Codespaces.Grpc.SshServerHostService.v1.SshServerHost", "StartRemoteServerAsync"], "service/method constants");
 })();
 

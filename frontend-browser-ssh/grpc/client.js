@@ -115,12 +115,14 @@ export class GrpcConnection {
     st.resolve({ message: messages[0], headers: st.headers });
   }
 
-  /** Unary call. `service` like "pkg.Service", `method` like "Method". */
-  call(service, method, requestBytes) {
+  /** Unary call. `service` like "pkg.Service", `method` like "Method".
+   *  `metadata` is an object of extra headers (gRPC metadata), e.g.
+   *  { authorization: "Bearer token" }. */
+  call(service, method, requestBytes, metadata = {}) {
     this._start();
     const id = this.nextStreamId;
     this.nextStreamId += 2;
-    const headerBlock = encodeHeaderBlock([
+    const headers = [
       [":method", "POST"],
       [":scheme", "http"],
       [":path", `/${service}/${method}`],
@@ -129,7 +131,9 @@ export class GrpcConnection {
       ["te", "trailers"],
       ["grpc-encoding", "identity"],
       ["user-agent", this.userAgent],
-    ]);
+    ];
+    for (const [k, v] of Object.entries(metadata)) headers.push([String(k).toLowerCase(), String(v)]);
+    const headerBlock = encodeHeaderBlock(headers);
     return new Promise((resolve, reject) => {
       this.streams.set(id, { resolve, reject, headers: {}, data: [] });
       this._send(encodeHeaders(id, headerBlock, { endStream: false, endHeaders: true }));

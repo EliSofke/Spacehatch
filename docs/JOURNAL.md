@@ -475,3 +475,15 @@ calls channel.adjustWindow, and (b) for a raw SshChannel, subscribes via
 onDataReceived + adjustWindow. Outbound goes via channel.send(), serialized.
 Also logs .channel presence + channel API. This should let 8a (gRPC
 StartRemoteServerAsync over 16634) complete; 8b reuses the same wiring.
+
+## BREAKTHROUGH — 401 diagnosed: agent needs a fixed sentinel auth header
+Live diagnostics paid off: the agent replied :status 401, server: Kestrel (the
+codespace agent gRPC server is ASP.NET Core, not grpc-go). Our HTTP/2 stack is
+correct — the server parsed it and returned a clean 401 for missing auth.
+invoker.go shows gh attaches a FIXED header on every RPC:
+  metadata.AppendToOutgoingContext(ctx, "Authorization", "Bearer token")
+i.e. the literal string "Bearer token" (real auth is at the tunnel layer).
+Fix: GrpcConnection.call now takes a metadata object; agent.js sends
+{ authorization: "Bearer token" } (AGENT_METADATA). mock-server captures request
+headers; agent.test asserts the header is sent. Suites: 12/13/6/7 green.
+This should clear the 401 → StartRemoteServerAsync should return {port,user}.

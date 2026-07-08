@@ -42,8 +42,13 @@ export function decodeStartRemoteServerResponse(msg) {
  * Call StartRemoteServerAsync over a connected GrpcConnection.
  * Returns { port: number, user: string } on success; throws otherwise.
  */
+// The agent's internal Kestrel gRPC server requires a fixed sentinel auth
+// header on every call (the real auth is at the tunnel layer). gh sends exactly
+// this: metadata.AppendToOutgoingContext(ctx, "Authorization", "Bearer token").
+export const AGENT_METADATA = { authorization: "Bearer token" };
+
 export async function startRemoteServer(conn, userPublicKey) {
-  const { message } = await conn.call(SSH_SERVICE, START_REMOTE_SERVER, encodeStartRemoteServerRequest(userPublicKey));
+  const { message } = await conn.call(SSH_SERVICE, START_REMOTE_SERVER, encodeStartRemoteServerRequest(userPublicKey), AGENT_METADATA);
   const resp = decodeStartRemoteServerResponse(message);
   if (!resp.result) {
     throw new Error(`StartRemoteServer failed: ${resp.message || "unknown error"}`);

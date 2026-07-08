@@ -39,7 +39,7 @@ export class MockGrpcServer {
       if (f.type === FRAME.SETTINGS) {
         if (!(f.flags & FLAG.ACK)) this.send(encodeSettingsAck());
       } else if (f.type === FRAME.HEADERS) {
-        this.dec.decode(f.payload);
+        this.lastHeaders = Object.fromEntries(this.dec.decode(f.payload));
         if (!this.req.has(f.streamId)) this.req.set(f.streamId, []);
       } else if (f.type === FRAME.DATA) {
         const a = this.req.get(f.streamId) || [];
