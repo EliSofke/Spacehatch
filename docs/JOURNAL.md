@@ -629,3 +629,39 @@ triggers. Rewrote both READMEs and the worker tests for the actual routes
 pruning: page loads with 0 errors, selftest 20/20, and a full E2E is green
 (StartRemoteServer→pty→shell, read+write, no doubling, stable 45s). Tagged the
 lean final as v1.1.0.
+
+## gh-in-WASM — GitHub's unmodified go-gh compiled to the browser
+Goal: run gh in the browser terminal without modifying gh's code and without x86
+emulation. Hard finding (proven, not assumed): the gh *binary* does NOT compile
+to WASM — neither GOOS=js nor GOOS=wasip1. Blockers need POSIX terminal/process
+syscalls with no js/wasm fallback, and crucially several live in gh's OWN
+packages (internal/flock -> syscall.Flock, internal/telemetry -> Setpgid) plus
+its dep tree (survey, bubbletea, tcell, termenv, clipboard, in-toto). Because
+gh-internal sub-packages cannot be `go mod replace`d and gh must stay unmodified,
+the literal gh-binary-in-WASM is impossible. This is the compile-time face of the
+same "gh leans on OS capabilities" problem seen earlier at runtime for SSH.
+
+Pivot (faithful + buildable): GitHub's official, unmodified library
+github.com/cli/go-gh/v2 — the same auth/config/REST logic gh uses internally,
+made for embedding. It compiles cleanly to GOOS=js (~12.6 MB, -s -w). gh-wasm-src/
+is a thin main mirroring `gh api <endpoint>` on go-gh's DefaultRESTClient; no gh
+code is touched. All adaptation lives in the host/driver layer (frontend-gh-wasm/
+boot.js): argv/env injection (GH_TOKEN), stdout/stderr patched into xterm via the
+wasm_exec.js fs shim, and api.github.com rewritten to the worker's new /gh-api
+proxy (CORS + injected User-Agent, which the browser forbids setting).
+
+Worker: added a /gh-api/<path> route (auth-worker/worker.js) that relays the
+caller's bearer token to api.github.com, injects User-Agent + Accept +
+X-GitHub-Api-Version, enforces ALLOWED_ORIGIN, and returns CORS + rate-limit
+headers. Covered by 3 new unit tests (13/13 worker checks pass).
+
+E2E (test/gh-wasm-e2e.mjs): a headless harness serves the frontend and routes
+/gh-api/* through the REAL worker code, then drives the page against the LIVE
+GitHub API. Both green: `gh api user` -> {"login":"EliSofke",...}; `gh api
+/user/codespaces` -> the real codespace list. Fuzzing-style iteration caught and
+fixed two driver bugs (leading-slash -> // 404; uncaptured exit code).
+
+Boundary (honest): interactive TUI/SSH commands (`gh cs ssh`) remain out of reach
+in WASM without modifying gh — the constraint's own consequence. The control-plane
+(HTTP) surface is fully covered. Branch: feat/gh-in-wasm. The Rust->WASM HPACK
+work lives on its own branch feat/rust-hpack-wasm.

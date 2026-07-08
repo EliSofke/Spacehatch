@@ -68,6 +68,37 @@ async function main() {
   res = await worker.fetch(req("GET", "/relay/??/x", { origin: env.ALLOWED_ORIGIN, upgrade: true }), env);
   ok(res.status === 400, "/relay bad path → 400");
 
+  // /gh-api GitHub REST proxy
+  const ghReq = (method, path, { origin, auth } = {}) =>
+    new Request(`https://worker.example${path}`, {
+      method,
+      headers: { ...(origin ? { Origin: origin } : {}), ...(auth ? { Authorization: auth } : {}) },
+    });
+  res = await worker.fetch(ghReq("OPTIONS", "/gh-api/user", { origin: env.ALLOWED_ORIGIN }), env);
+  ok(res.status === 204 && /Authorization/i.test(res.headers.get("Access-Control-Allow-Headers")), "/gh-api OPTIONS → 204 + allows Authorization");
+
+  const cap = {};
+  globalThis.fetch = async (url, init) => {
+    cap.url = url;
+    cap.ua = init.headers.get("User-Agent");
+    cap.auth = init.headers.get("Authorization");
+    return new Response('{"login":"octocat"}', { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  res = await worker.fetch(ghReq("GET", "/gh-api/user", { origin: env.ALLOWED_ORIGIN, auth: "token abc" }), env);
+  const ghBody = await res.text();
+  ok(
+    res.status === 200 &&
+      cap.url === "https://api.github.com/user" &&
+      cap.ua === "spacehatch-gh-wasm" &&
+      cap.auth === "token abc" &&
+      res.headers.get("Access-Control-Allow-Origin") === env.ALLOWED_ORIGIN &&
+      /octocat/.test(ghBody),
+    "/gh-api forwards to GitHub + injects User-Agent + passes token + CORS",
+  );
+
+  res = await worker.fetch(ghReq("GET", "/gh-api/user", { origin: "https://evil.example", auth: "token abc" }), env);
+  ok(res.status === 403, "/gh-api foreign origin → 403");
+
   // unknown route
   res = await worker.fetch(req("POST", "/nope", { origin: env.ALLOWED_ORIGIN }), env);
   ok(res.status === 404, "unknown path → 404");
