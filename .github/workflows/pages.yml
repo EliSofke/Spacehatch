@@ -3,7 +3,7 @@ name: pages
 on:
   push:
     branches: [main]
-    paths: ["frontend-browser-ssh/**", "frontend-pure/**", ".github/workflows/pages.yml"]
+    paths: ["frontend-lite/**", "frontend-browser-ssh/**", "frontend-pure/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -26,6 +26,6 @@ jobs:
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: frontend-browser-ssh
+          path: frontend-lite
       - id: deployment
         uses: actions/deploy-pages@v4

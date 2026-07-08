@@ -253,3 +253,21 @@ Symptom → cause → fix for the failure modes seen in practice:
 | **Terminal URL returns 502 Bad Gateway** | Port `7681` is forwarded but nothing listens: the in-codespace bridge did not come up. Common when the Codespace predates a devcontainer change and still runs the old lifecycle scripts. | **Delete the Codespace and relaunch** so a fresh one uses the current `.devcontainer/` scripts. Persistent failures are logged to `/tmp/spacehatch-bridge.log` inside the Codespace. |
 | **Terminal URL returns 404** | Port `7681` is not forwarded yet — the bridge has not started, so the port was never registered. | Wait for the bridge to start, or delete and relaunch; confirm the target repo carries the full `.devcontainer/` bridge (see [Required repository artifacts](#required-repository-artifacts)). |
 | **Codespace stuck in `Provisioning`** | A first cold start takes 1–4 minutes. | Wait; the terminal tab shows a loading screen and opens automatically once the state reaches `Available`. |
+
+---
+
+## Variant E — lite (session-based, zero everything)
+
+The lightest possible launcher: a static page whose button navigates to
+GitHub's documented quickstart URL, `https://codespaces.new/{owner}/{repo}?quickstart=1`.
+Your existing github.com session handles auth — the same mechanism VS Code Web
+rides. GitHub resumes the most recent codespace for the repo or creates one,
+and quickstart links always open in the **VS Code web client**, where the
+terminal is one `Ctrl+`` away. No PAT, no OAuth, no worker, no API calls,
+works on any bare repository.
+
+Trade-offs: the terminal lives inside VS Code Web (or JupyterLab, if opened
+from the codespaces list with that editor preference) rather than standing
+alone, and the page has no programmatic control — state, stop and delete are
+handled on github.com/codespaces. That is exactly the deal: GitHub's
+infrastructure does everything, our page only aims the click.

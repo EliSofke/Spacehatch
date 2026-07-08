@@ -183,3 +183,16 @@ unknown, to be settled by a live SDK spike (@microsoft/dev-tunnels-ssh +
 - app.js now fetches endpoints via /tunnel and passes the full tunnel to
   connect(). Next live step: confirm connect() resolves with endpoints, then
   finalize bindShell (SSH shell channel).
+
+## v0.5.0 — Variant E: tokenless session-based launcher (frontend-lite)
+- Requirement: "as lightweight as VS Code itself, no PAT, no OAuth". Insight:
+  VS Code Web is tokenless because it rides the github.com SESSION — and
+  GitHub's documented quickstart URL does the same for launching:
+  codespaces.new/{owner}/{repo}?quickstart=1 resumes-or-creates and always
+  opens in the VS Code web client (terminal via Ctrl+`).
+- frontend-lite/: static page, zero fetch/storage/third-party, top-level
+  navigation only; owner/repo via inputs or ?owner=&repo=&ref=. Pages now
+  deploys frontend-lite as the primary site (browser-ssh spike stays in repo).
+- Positioning: E = zero infrastructure + GitHub UI shell around the terminal;
+  D = bare terminal, one relay function, SSH binding still to validate;
+  JupyterLab = terminal-first via account editor preference.
