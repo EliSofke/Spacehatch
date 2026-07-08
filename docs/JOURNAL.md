@@ -503,3 +503,14 @@ sshd and StartRemoteServer would return {port,user}. This vindicates Variant C's
 bare-repo thesis. Next: test against a bare repo (no devcontainer) → expect
 StartRemoteServer OK → then 8b (second SSH + shell). Alternatively add
 ghcr.io/devcontainers/features/sshd:1 to a custom devcontainer.
+
+## fix — resilience to transient relay session drops (fresh codespace)
+On a fresh bare-repo codespace (silent-fog, universal image) the run hit
+"Failed to connect to remote port. Ensure that the client has connected by
+calling connectClient" — the tunnel SSH session (bo) drops periodically
+("Error reading from stream") and reconnects (session-reconnect). Our port-open
+happened during a drop. Hardened bindShell: openForwarded now waits for
+client.isSshSessionActive and retries connectToForwardedPort (6x); the 8a
+StartRemoteServer step retries up to 4x with a fresh stream + a 20s timeout, so
+a mid-call drop is recovered. (Root cause of the ~10s relay drops — possibly the
+plain-Worker WS proxy vs Durable Object — still to investigate separately.)

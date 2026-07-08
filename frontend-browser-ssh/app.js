@@ -348,9 +348,22 @@ async function bindShell(client, term, ssh) {
   const toU8 = (d) => (d instanceof Uint8Array ? d : d && d.buffer ? new Uint8Array(d.buffer, d.byteOffset || 0, d.byteLength) : new Uint8Array(d));
   const toBuf = (u8) => (typeof globalThis.Buffer !== "undefined" ? globalThis.Buffer.from(u8) : u8);
   const streamAPI = (s) => { const p = s && Object.getPrototypeOf(s); return p ? Object.getOwnPropertyNames(p).filter((n) => typeof s[n] === "function").slice(0, 24).join(",") : typeof s; };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const openForwarded = async (port) => {
-    try { await client.waitForForwardedPort(port); } catch (e) { log(`waitForForwardedPort(${port}) note: ${e.message}`); }
-    return client.connectToForwardedPort(port);
+    let lastErr;
+    for (let attempt = 1; attempt <= 6; attempt++) {
+      // Wait until the tunnel SSH session is active (it can drop + reconnect).
+      for (let i = 0; i < 40 && client.isSshSessionActive === false; i++) await sleep(250);
+      try {
+        await client.waitForForwardedPort(port);
+        return await client.connectToForwardedPort(port);
+      } catch (e) {
+        lastErr = e;
+        log(`connectToForwardedPort(${port}) attempt ${attempt}/6: ${e.message} — retrying`, "error");
+        await sleep(1200);
+      }
+    }
+    throw new Error(`could not open forwarded port ${port} after retries: ${lastErr && lastErr.message}`);
   };
   // The SDK's SshStream extends node:stream.Duplex, which esm.sh polyfills
   // incompletely in the browser (no working on()/write(); its internal push()
@@ -389,12 +402,28 @@ async function bindShell(client, term, ssh) {
 
   // ---- 8a: gRPC StartRemoteServerAsync over forwarded port 16634 ------------
   setStatus("starting SSH server via agent (gRPC) …", true);
-  log(`connecting to forwarded agent port ${AGENT_PORT} …`);
-  const agentStream = await openForwarded(AGENT_PORT);
-  log(`agentStream API: ${streamAPI(agentStream)} | has .channel=${!!(agentStream && agentStream.channel)}${agentStream && agentStream.channel ? " channel:" + streamAPI(agentStream.channel) : ""}`);
-  const conn = new GrpcConnection(wireStream(agentStream, (u8) => conn.feed(u8)), { authority: "codespace-internal", debug: (m) => log(`grpc: ${m}`) });
-  log("calling StartRemoteServerAsync …");
-  const { port, user } = await startRemoteServer(conn, openssh);
+  const withTimeout = (p, ms, label) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${label} timed out`)), ms))]);
+  let port, user;
+  {
+    let lastErr;
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      log(`connecting to forwarded agent port ${AGENT_PORT} (attempt ${attempt}/4) …`);
+      try {
+        const agentStream = await openForwarded(AGENT_PORT);
+        log(`agentStream has .channel=${!!(agentStream && agentStream.channel)}`);
+        let conn;
+        conn = new GrpcConnection(wireStream(agentStream, (u8) => conn.feed(u8)), { authority: "codespace-internal", debug: (m) => log(`grpc: ${m}`) });
+        log("calling StartRemoteServerAsync …");
+        ({ port, user } = await withTimeout(startRemoteServer(conn, openssh), 20000, "StartRemoteServer"));
+        break;
+      } catch (e) {
+        lastErr = e;
+        log(`StartRemoteServer attempt ${attempt}/4 failed: ${e.message} — retrying`, "error");
+        await sleep(1500);
+      }
+    }
+    if (port === undefined) throw new Error(`StartRemoteServer failed after retries: ${lastErr && lastErr.message}`);
+  }
   log(`StartRemoteServer OK → sshPort=${port} user=${user}`, "ok");
   term.write(`\r\n\x1b[32m[spacehatch] agent started SSH server on port ${port} as ${user}\x1b[0m\r\n`);
 
