@@ -349,18 +349,25 @@ async function bindShell(client, term, ssh) {
   const toBuf = (u8) => (typeof globalThis.Buffer !== "undefined" ? globalThis.Buffer.from(u8) : u8);
   const streamAPI = (s) => { const p = s && Object.getPrototypeOf(s); return p ? Object.getOwnPropertyNames(p).filter((n) => typeof s[n] === "function").slice(0, 24).join(",") : typeof s; };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const openForwarded = async (port) => {
+  const withTimeout = (p, ms, label) => Promise.race([Promise.resolve(p), new Promise((_, rej) => setTimeout(() => rej(new Error(`${label} timed out`)), ms))]);
+  const listPorts = () => { try { const fp = client.forwardedPorts; if (!fp) return "?"; const arr = Array.from(fp); return arr.map((p) => (p && (p.remotePort ?? p.portNumber ?? p)) ).join(",") || "none"; } catch (e) { return "err:" + e.message; } };
+  const openForwarded = async (port, { refresh = false } = {}) => {
     let lastErr;
-    for (let attempt = 1; attempt <= 6; attempt++) {
+    for (let attempt = 1; attempt <= 8; attempt++) {
       // Wait until the tunnel SSH session is active (it can drop + reconnect).
       for (let i = 0; i < 40 && client.isSshSessionActive === false; i++) await sleep(250);
+      // For agent-started ports (e.g. the sshd port), ask the host to (re)publish
+      // its forwarded ports — gh does RefreshPorts before connecting.
+      if (refresh && typeof client.refreshPorts === "function") {
+        try { await client.refreshPorts(); } catch (e) { log(`refreshPorts: ${e.message}`); }
+      }
       try {
-        await client.waitForForwardedPort(port);
+        await withTimeout(client.waitForForwardedPort(port), 4000, `waitForForwardedPort(${port})`);
         return await client.connectToForwardedPort(port);
       } catch (e) {
         lastErr = e;
-        log(`connectToForwardedPort(${port}) attempt ${attempt}/6: ${e.message} — retrying`, "error");
-        await sleep(1200);
+        log(`open port ${port} attempt ${attempt}/8: ${e.message} (forwarded: ${listPorts()}) — retrying`, "error");
+        await sleep(1500);
       }
     }
     throw new Error(`could not open forwarded port ${port} after retries: ${lastErr && lastErr.message}`);
@@ -402,7 +409,6 @@ async function bindShell(client, term, ssh) {
 
   // ---- 8a: gRPC StartRemoteServerAsync over forwarded port 16634 ------------
   setStatus("starting SSH server via agent (gRPC) …", true);
-  const withTimeout = (p, ms, label) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${label} timed out`)), ms))]);
   let port, user;
   {
     let lastErr;
@@ -429,8 +435,8 @@ async function bindShell(client, term, ssh) {
 
   // ---- 8b: second SSH session → pty + shell → xterm (live frontier) ---------
   setStatus("opening SSH session …", true);
-  log(`connecting to forwarded ssh port ${port} …`);
-  const sshStream = await openForwarded(port);
+  log(`connecting to forwarded ssh port ${port} (with refreshPorts) …`);
+  const sshStream = await openForwarded(port, { refresh: true });
   log(`sshStream API: ${streamAPI(sshStream)}`);
   const config = new ssh.SshSessionConfiguration();
   const session = new ssh.SshClientSession(config);

@@ -523,3 +523,16 @@ every ~10s and had to session-reconnect, and on the fresh universal-image
 codespace it never stabilized. Fix: fetch(request, env, ctx) and
 ctx.waitUntil(done), where `done` resolves when either side closes. This keeps
 the Worker (and the upstream WS) alive for the whole session. Worker tests green.
+
+## MILESTONE — 8a DONE on a bare repo; 8b needs the sshd port forwarded
+Live on a fresh universal-image (bare) codespace, with the worker keepalive fix
+the relay stayed stable and: "StartRemoteServer OK → sshPort=2222 user=codespace".
+So the entire thesis is proven: bare repo + browser-only + serverless gRPC →
+agent starts a real sshd. 8b then hung at connectToForwardedPort(2222): port
+2222 is NOT auto-advertised by the host (only 16634/16635 were), so
+waitForForwardedPort(2222) never resolves. cli/cli's ssh.go shows gh calls
+ForwardPort (CreateTunnelPort via mgmt API + RefreshPorts) before connecting.
+First attempt (cheap): openForwarded now calls client.refreshPorts() before
+waiting and logs the available forwardedPorts, since codespaces usually
+auto-forwards a newly-listening port once refreshed. If 2222 still doesn't
+appear, next step is a CreateTunnelPort management call (worker-proxied) like gh.
