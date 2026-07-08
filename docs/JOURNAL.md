@@ -379,3 +379,21 @@ HTTP/2 stack that browsers deliberately don't expose, and that the easy escapes
 (gRPC-Web/transcoding) don't apply because the agent doesn't support them.
 Decision stands with the user: continue C (huge, browser HTTP/2 from scratch) or
 use a Node/Go host (A) where gRPC is trivial.
+
+## spike — Variant C: HTTP/2 + HPACK bricks done (the crux), unit-tested
+- grpc/huffman-table.js — RFC 7541 Appendix B table generated programmatically
+  from rfc7541.txt (257 entries; verified against 5 known codes incl. EOS).
+- grpc/http2.js — frame reader/writer (preface, SETTINGS, HEADERS, DATA,
+  WINDOW_UPDATE, RST_STREAM, PING, GOAWAY), incremental FrameReader with
+  padding/priority stripping.
+- grpc/hpack.js — integer + string coding, static (61) + dynamic table with
+  eviction, all literal forms, dynamic-size updates, Huffman encode + decode.
+- grpc/protocol.test.mjs: 13/13 pass, including the canonical RFC 7541 vectors
+  C.4.1 (request, Huffman) and C.6.1 (response, Huffman + dynamic table), plus
+  a full encode→decode round-trip of our gRPC request headers and HTTP/2 frame
+  round-trips. protobuf/framing tests still 12/12.
+Remaining C bricks: ed25519 keypair → OpenSSH format; unary gRPC call
+orchestration (tie protobuf+framing+http2+hpack over the tunnel stream); agent
+service/method + field numbers (reverse-engineer from cli/cli
+internal/codespaces/grpc); second SSH session + pty/shell → xterm. Integration
+remains live-only.
