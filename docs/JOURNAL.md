@@ -397,3 +397,20 @@ orchestration (tie protobuf+framing+http2+hpack over the tunnel stream); agent
 service/method + field numbers (reverse-engineer from cli/cli
 internal/codespaces/grpc); second SSH session + pty/shell → xterm. Integration
 remains live-only.
+
+## spike — Variant C: bricks 5 + 6 done (gRPC client interoperates with real HTTP/2)
+- grpc/openssh.js — ed25519 keypair via WebCrypto + OpenSSH public-key
+  formatting (ssh-ed25519 wire format) and a parser. Tested: line matches an
+  independent Node/Buffer construction; round-trip parse; generated key parses
+  to a 32-byte key.
+- grpc/client.js — GrpcConnection: transport-agnostic unary gRPC over HTTP/2
+  over any duplex (send/feed). Preface+SETTINGS handshake, HEADERS+DATA request,
+  response HEADERS/DATA + trailers (grpc-status), flow-control window replenish.
+- grpc/client.test.mjs: 5/5. The key test stands up a REAL node:http2 server
+  speaking gRPC framing + trailers; the hand-rolled client completes a unary
+  call (protobuf echo) and the server confirms it saw the correct :path and
+  content-type. => our HTTP/2+HPACK+framing+protobuf stack interoperates with a
+  production HTTP/2 implementation.
+Remaining: brick 7 (agent service/method + field numbers from cli/cli
+internal/codespaces/grpc) and brick 8 (second SSH session + pty/shell → xterm),
+then live integration (stream to 16634 via the SDK, real agent, real shell).

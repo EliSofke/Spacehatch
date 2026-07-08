@@ -33,8 +33,8 @@ returned port and opens a shell.
 | gRPC message framing (5-byte prefix) | `framing.js` | **built + unit-tested** |
 | HTTP/2 frames (SETTINGS/HEADERS/DATA/WINDOW_UPDATE) | `http2.js` | **built + unit-tested** |
 | HPACK encode (literal) + decode (static/dynamic + Huffman) | `hpack.js` | **built + unit-tested (RFC 7541 C.4/C.6)** |
-| ed25519 keypair → OpenSSH public-key format | (browser) | pending |
-| Unary gRPC call orchestration over a stream | `client.js` | pending |
+| ed25519 keypair → OpenSSH public-key format | `openssh.js` | **built + unit-tested** |
+| Unary gRPC call orchestration over a stream | `client.js` | **built + tested vs real node:http2** |
 | Agent service/method + request/response field numbers | — | to reverse-engineer from cli/cli `internal/codespaces/grpc` |
 | Second SSH session + pty/shell → xterm | `app.js bindShell` | pending |
 
