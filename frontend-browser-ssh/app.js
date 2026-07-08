@@ -105,6 +105,11 @@ function selectMode(mode) {
 els.tabPat.addEventListener("click", () => selectMode("pat"));
 els.tabOauth.addEventListener("click", () => selectMode("oauth"));
 
+// PAT-only deployment: remove the OAuth tab from the UI entirely.
+if (cfg.patOnly) {
+  els.tabOauth.classList.add("hidden");
+}
+
 // ---- OAuth (PKCE) — same design as frontend-oauth -------------------------
 function base64url(bytes) {
   return btoa(String.fromCharCode(...new Uint8Array(bytes)))
@@ -398,6 +403,7 @@ els.stop.addEventListener("click", async () => {
 // ---- Boot -----------------------------------------------------------------
 (function boot() {
   selectMode("pat");
+  if (cfg.patOnly) return; // PAT-only: no OAuth callback handling
   const code = params.get("code");
   const st = params.get("state");
   if (code && st) {

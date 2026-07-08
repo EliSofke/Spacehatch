@@ -209,3 +209,14 @@ unknown, to be settled by a live SDK spike (@microsoft/dev-tunnels-ssh +
   &domain= (GitHub reserves the right to change the domain).
 - Constraint documented: target repo must carry the .devcontainer bridge;
   lifecycle (stop/delete) stays on github.com/codespaces.
+
+## v0.7.0 — decision: Variant D PAT-only is the primary solution
+- Chosen combination: PAT + bare repo + own terminal → Variant D, PAT-only.
+- frontend-browser-ssh: patOnly flag (default true) hides the OAuth tab and
+  skips callback handling; /token unused. Worker becomes secret-free:
+  only /tunnel + ALLOWED_ORIGIN (documented in auth-worker/README).
+- Pages now deploys frontend-browser-ssh as the primary site; lite/hybrid
+  remain in the repo as the tokenless alternatives.
+- Open items unchanged: deploy the worker (user's Cloudflare account),
+  set workerUrl, then live-validate connect() with endpoints and finalize
+  bindShell (SSH shell channel).

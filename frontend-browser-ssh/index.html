@@ -137,10 +137,13 @@
   <script>
     // Configuration. URL params ?owner=&repo= override the defaults.
     window.SPACEHATCH_D_CONFIG = {
-      // OAuth (only for the "Sign in with GitHub" option):
+      // PAT-only mode: hides the OAuth tab entirely. The worker then needs
+      // NO secrets — only its /tunnel route (ALLOWED_ORIGIN in wrangler.toml).
+      patOnly: true,
+      // OAuth (ignored while patOnly is true):
       clientId: "YOUR_OAUTH_APP_CLIENT_ID",
-      // URL of the deployed worker. Used for /tunnel (required for the
-      // terminal, both auth modes) and /token (OAuth only). See auth-worker/.
+      // URL of the deployed worker. Required for the terminal (/tunnel);
+      // /token is used only when patOnly is false. See auth-worker/.
       workerUrl: "https://spacehatch-auth.YOUR-SUBDOMAIN.workers.dev",
       // Defaults for the target repository:
       owner: "EliSofke",

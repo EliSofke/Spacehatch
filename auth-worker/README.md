@@ -62,3 +62,10 @@ npm test   # mocks GitHub's token endpoint; no network, no real credentials
   exchange (memory only).
 - PKCE (`code_verifier`) binds the exchange to the browser session that began
   it, so an intercepted code alone is not redeemable.
+
+## PAT-only mode (no secrets at all)
+
+When the frontend runs with `patOnly: true`, only the `/tunnel` route is used.
+The worker then needs **no secrets** — skip `wrangler secret put` entirely;
+only `ALLOWED_ORIGIN` in `wrangler.toml` matters. The worker is stateless,
+secret-free, and sees only short-lived tunnel connect tokens.
