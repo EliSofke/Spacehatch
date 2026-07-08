@@ -1,8 +1,8 @@
 /**
  * Spacehatch Variant D — browser-side SSH into a Codespace, no Node/gh.
  *
- * Pipeline (all client-side except the optional OAuth exchange):
- *   auth (PAT or OAuth) → REST create/poll (api.github.com, CORS ok)
+ * Pipeline (all client-side):
+ *   auth (PAT) → REST create/poll (api.github.com, CORS ok)
  *   → GET /user/codespaces/{name}?internal=true → connection.tunnelProperties
  *   → @microsoft/dev-tunnels-connections opens the relay (WSS)
  *   → @microsoft/dev-tunnels-ssh runs SSH over it (Web Crypto)
@@ -21,19 +21,12 @@ const params = new URLSearchParams(location.search);
 const WORKER_URL = (cfg.workerUrl || cfg.authWorkerUrl || "").replace(/\/$/, "");
 
 const els = {
-  tabPat: document.getElementById("tab-pat"),
-  tabOauth: document.getElementById("tab-oauth"),
-  panePat: document.getElementById("pane-pat"),
-  paneOauth: document.getElementById("pane-oauth"),
   token: document.getElementById("token"),
-  login: document.getElementById("btn-login"),
-  logout: document.getElementById("btn-logout"),
   owner: document.getElementById("owner"),
   repo: document.getElementById("repo"),
   launch: document.getElementById("btn-launch"),
   stop: document.getElementById("btn-stop"),
   status: document.getElementById("status"),
-  whoami: document.getElementById("whoami"),
   led: document.getElementById("led"),
   bezelTitle: document.getElementById("bezel-title"),
   terminal: document.getElementById("terminal"),
@@ -43,8 +36,6 @@ els.owner.value = params.get("owner") || cfg.owner || "";
 els.repo.value = params.get("repo") || cfg.repo || "";
 
 const state = {
-  mode: "pat", // "pat" | "oauth"
-  oauthToken: null, // token acquired via OAuth (memory only)
   codespaceName: null,
   client: null, // dev-tunnels client, for teardown
 };
@@ -91,98 +82,13 @@ function setConnected(on, title) {
   els.stop.classList.toggle("hidden", !on);
 }
 
-// The active token, regardless of auth mode.
+// The active token (a PAT pasted into the field).
 function token() {
-  return state.mode === "oauth" ? state.oauthToken : els.token.value.trim();
+  return els.token.value.trim();
 }
 function haveToken() {
   return !!token();
 }
-
-// ---- Auth mode toggle -----------------------------------------------------
-function selectMode(mode) {
-  state.mode = mode;
-  els.tabPat.setAttribute("aria-selected", String(mode === "pat"));
-  els.tabOauth.setAttribute("aria-selected", String(mode === "oauth"));
-  els.panePat.classList.toggle("hidden", mode !== "pat");
-  els.paneOauth.classList.toggle("hidden", mode !== "oauth");
-}
-els.tabPat.addEventListener("click", () => selectMode("pat"));
-els.tabOauth.addEventListener("click", () => selectMode("oauth"));
-
-// PAT-only deployment: remove the OAuth tab from the UI entirely.
-if (cfg.patOnly) {
-  els.tabOauth.classList.add("hidden");
-}
-
-// ---- OAuth (PKCE) — same design as frontend-oauth -------------------------
-function base64url(bytes) {
-  return btoa(String.fromCharCode(...new Uint8Array(bytes)))
-    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-function randomString(n = 32) {
-  const a = new Uint8Array(n);
-  crypto.getRandomValues(a);
-  return base64url(a);
-}
-async function pkceChallenge(v) {
-  return base64url(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(v)));
-}
-function redirectUri() {
-  return location.origin + location.pathname;
-}
-async function signIn() {
-  const verifier = randomString();
-  const csrf = randomString(16);
-  sessionStorage.setItem("sh_d_verifier", verifier);
-  sessionStorage.setItem("sh_d_state", csrf);
-  const url = new URL("https://github.com/login/oauth/authorize");
-  url.searchParams.set("client_id", cfg.clientId);
-  url.searchParams.set("redirect_uri", redirectUri());
-  url.searchParams.set("scope", "codespace repo");
-  url.searchParams.set("state", csrf);
-  url.searchParams.set("code_challenge", await pkceChallenge(verifier));
-  url.searchParams.set("code_challenge_method", "S256");
-  location.href = url.toString();
-}
-async function handleOAuthCallback(code, returnedState) {
-  const expected = sessionStorage.getItem("sh_d_state");
-  const verifier = sessionStorage.getItem("sh_d_verifier");
-  history.replaceState({}, document.title, redirectUri());
-  if (!expected || returnedState !== expected || !verifier) {
-    setStatus("Sign-in state mismatch — try again.");
-    return;
-  }
-  sessionStorage.removeItem("sh_d_state");
-  sessionStorage.removeItem("sh_d_verifier");
-  setStatus("completing sign-in …", true);
-  try {
-    const res = await fetch(`${WORKER_URL}/token`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code, code_verifier: verifier }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.access_token) throw new Error(data.detail || data.error || `exchange failed (${res.status})`);
-    state.oauthToken = data.access_token;
-    selectMode("oauth");
-    els.login.classList.add("hidden");
-    els.logout.classList.remove("hidden");
-    const me = await gh("/user");
-    els.whoami.textContent = `@${me.login}`;
-    setStatus(`signed in as ${me.login}`);
-  } catch (err) {
-    setStatus(`Sign-in failed: ${err.message}`);
-  }
-}
-els.login.addEventListener("click", () => void signIn());
-els.logout.addEventListener("click", () => {
-  state.oauthToken = null;
-  els.login.classList.remove("hidden");
-  els.logout.classList.add("hidden");
-  els.whoami.textContent = "";
-  setStatus("signed out");
-});
 
 // ---- GitHub REST ----------------------------------------------------------
 async function gh(path, init = {}) {
@@ -619,13 +525,4 @@ els.stop.addEventListener("click", async () => {
 });
 
 // ---- Boot -----------------------------------------------------------------
-(function boot() {
-  selectMode("pat");
-  if (cfg.patOnly) return; // PAT-only: no OAuth callback handling
-  const code = params.get("code");
-  const st = params.get("state");
-  if (code && st) {
-    selectMode("oauth");
-    void handleOAuthCallback(code, st);
-  }
-})();
+// PAT-only: the token is pasted into the field; nothing to bootstrap here.

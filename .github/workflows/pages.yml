@@ -3,7 +3,7 @@ name: pages
 on:
   push:
     branches: [main]
-    paths: ["frontend-lite/**", "frontend-browser-ssh/**", "frontend-pure/**", ".github/workflows/pages.yml"]
+    paths: ["frontend-browser-ssh/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:

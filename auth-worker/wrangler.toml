@@ -2,10 +2,7 @@ name = "spacehatch-auth"
 main = "worker.js"
 compatibility_date = "2025-01-01"
 
-# Secrets are NOT set here. Set them out-of-band so they never touch the repo:
-#   wrangler secret put GITHUB_CLIENT_ID
-#   wrangler secret put GITHUB_CLIENT_SECRET
-# Public, non-secret config can live as a plain var:
+# No secrets required. Only the allowed Pages origin (public, non-secret):
 [vars]
 ALLOWED_ORIGIN = "https://elisofke.github.io"
 

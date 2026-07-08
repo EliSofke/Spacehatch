@@ -3,7 +3,7 @@
   "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Stateless GitHub OAuth token-exchange endpoint so the Spacehatch frontend can skip manual token entry.",
+  "description": "Stateless Cloudflare Worker (+ RelayProxy Durable Object) proxying the CORS-locked tunnel management/relay calls for Spacehatch.",
   "scripts": {
     "test": "node worker.test.mjs"
   }
