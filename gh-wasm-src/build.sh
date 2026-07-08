@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Build the unmodified go-gh library into a GOOS=js WASM module (gh.wasm) and
-# refresh wasm_exec.js from the active Go toolchain.
+# refresh wasm_exec.js from the active Go toolchain. Environment-agnostic:
+# expects `go` on PATH (locally: export it; in CI: actions/setup-go). GOPATH /
+# GOCACHE are left to the caller / Go defaults so this runs unchanged in CI.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-export PATH="/home/claude/go/bin:$PATH"
-export GOPATH="${GOPATH:-/home/claude/gopath}" GOCACHE="${GOCACHE:-/home/claude/.gocache}" GOMODCACHE="${GOMODCACHE:-$GOPATH/pkg/mod}"
-
 OUT="$HERE/../frontend-gh-wasm"
 mkdir -p "$OUT"
 

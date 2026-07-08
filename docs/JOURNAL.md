@@ -665,3 +665,11 @@ Boundary (honest): interactive TUI/SSH commands (`gh cs ssh`) remain out of reac
 in WASM without modifying gh — the constraint's own consequence. The control-plane
 (HTTP) surface is fully covered. Branch: feat/gh-in-wasm. The Rust->WASM HPACK
 work lives on its own branch feat/rust-hpack-wasm.
+
+## gh.wasm now built in CI (not committed)
+Dropped the 12.6 MB gh.wasm (and generated wasm_exec.js) from git; both are now
+gitignored and produced by .github/workflows/gh-wasm.yml (setup-go from
+gh-wasm-src/go.mod, run build.sh, validate via WebAssembly.validate, upload
+artifact) on PRs + main. build.sh is now environment-agnostic (uses `go` on
+PATH). Local runs: `bash gh-wasm-src/build.sh` before the E2E harness, which now
+guards with a clear hint if the module is missing.

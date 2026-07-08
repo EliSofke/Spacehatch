@@ -5,11 +5,16 @@
 //   GH_TOKEN=... CHROME_BIN=... node test/gh-wasm-e2e.mjs
 import http from "http";
 import { readFile } from "fs/promises";
+import { existsSync } from "fs";
 import { fileURLToPath } from "url";
 import path from "path";
 import { chromium } from "playwright";
 
 const FE = path.resolve(fileURLToPath(new URL("../frontend-gh-wasm", import.meta.url)));
+if (!existsSync(path.join(FE, "gh.wasm"))) {
+  console.error("gh.wasm not found — build it first: bash gh-wasm-src/build.sh");
+  process.exit(1);
+}
 const worker = (await import("../auth-worker/worker.js")).default;
 const PORT = 8123;
 const ORIGIN = `http://localhost:${PORT}`;
