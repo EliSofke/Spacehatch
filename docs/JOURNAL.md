@@ -247,3 +247,18 @@ where `ws`/isomorphic-ws resolves to native WebSocket and `process`/`Buffer`
 are not globally injected — NOT esm.sh's node-polyfilled variant. Needs a real
 browser to validate. Alternatives that already ship: Variant E (tokenless) and
 the E+B hybrid (tokenless bare terminal).
+
+## spike — Variant D: force browser path (the 1006 fix)
+Read the esm.sh bundle: DefaultTunnelRelayStreamFactory.createRelayStream has
+two branches keyed on isNode():
+  isNode()  → openConnection(uri, protocols, {Authorization: `tunnel <token>`})
+  browser   → protocols=[...protocols, token]; openConnection(uri, protocols)
+i.e. the browser branch passes the tunnel token AS A WEBSOCKET SUBPROTOCOL
+(the only browser-allowed mechanism). isNode() is
+  () => typeof process<"u" && process.release?.name === "node"
+and esm.sh's /node/process.mjs shim reports release.name === "node" → node
+branch → Authorization header → browser drops it → relay 1006.
+Fix (no rebuild): import the shared https://esm.sh/node/process.mjs singleton
+and set release.name to "browser" before connect(), flipping isNode() false so
+the SDK takes its browser path. Next live test should show client.connect()
+resolving; then finalize bindShell.
