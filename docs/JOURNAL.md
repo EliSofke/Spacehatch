@@ -345,3 +345,17 @@ Achievable instead:
 - browser-only + bare-repo + VS Code/Jupyter terminal = Variant E (built)
 Pragmatic terminal over the proven transport: connectToForwardedPort(7681) →
 in-codespace bridge (needs the bridge in the repo).
+
+## spike — Variant C started: verifiable protocol bricks first
+Building the in-browser unary-gRPC-over-HTTP/2 client brick by brick, each
+unit-tested in Node before integration.
+- frontend-browser-ssh/grpc/protobuf.js — minimal proto3 codec (varint, wire
+  types 0/2). Tested against canonical vectors (150→08 96 01; "testing"→12 07…).
+- frontend-browser-ssh/grpc/framing.js — gRPC 5-byte length-prefixed framing,
+  with partial-trailer handling for streamed reads.
+- grpc/grpc.test.mjs: 12/12 pass.
+- grpc/README.md documents the full C pipeline, the 8 bricks, and their status,
+  plus the honesty note (protocol bricks are unit-testable; integration —
+  stream to 16634, live agent gRPC, second SSH, shell — needs live iterations).
+Next brick: http2.js (frames) + hpack.js (literal encode + Huffman decode),
+the crux; then the agent service/field reverse-engineering and integration.
