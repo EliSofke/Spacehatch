@@ -392,7 +392,7 @@ async function bindShell(client, term, ssh) {
   log(`connecting to forwarded agent port ${AGENT_PORT} …`);
   const agentStream = await openForwarded(AGENT_PORT);
   log(`agentStream API: ${streamAPI(agentStream)} | has .channel=${!!(agentStream && agentStream.channel)}${agentStream && agentStream.channel ? " channel:" + streamAPI(agentStream.channel) : ""}`);
-  const conn = new GrpcConnection(wireStream(agentStream, (u8) => conn.feed(u8)), { authority: "codespace-internal" });
+  const conn = new GrpcConnection(wireStream(agentStream, (u8) => conn.feed(u8)), { authority: "codespace-internal", debug: (m) => log(`grpc: ${m}`) });
   log("calling StartRemoteServerAsync …");
   const { port, user } = await startRemoteServer(conn, openssh);
   log(`StartRemoteServer OK → sshPort=${port} user=${user}`, "ok");

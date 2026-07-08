@@ -29,15 +29,17 @@ function concat(chunks) {
 }
 
 export class GrpcConnection {
-  constructor(send, { authority = "localhost", userAgent = "spacehatch-grpc/0" } = {}) {
+  constructor(send, { authority = "localhost", userAgent = "spacehatch-grpc/0", debug = null } = {}) {
     this._send = send;
     this.authority = authority;
     this.userAgent = userAgent;
+    this.debug = debug;
     this.reader = new FrameReader();
     this.hpackDec = new Decoder();
     this.nextStreamId = 1;
     this.streams = new Map();
     this._started = false;
+    this._rx = []; // raw inbound bytes (for diagnostics)
   }
 
   _start() {
@@ -50,7 +52,14 @@ export class GrpcConnection {
   }
 
   feed(chunk) {
-    for (const f of this.reader.push(chunk)) this._onFrame(f);
+    if (this.debug) {
+      const u8 = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+      if (this._rx.length < 8) this._rx.push(Array.from(u8.subarray(0, 64)).map((b) => b.toString(16).padStart(2, "0")).join(""));
+    }
+    for (const f of this.reader.push(chunk)) {
+      if (this.debug) this.debug(`h2 frame type=${f.type} flags=${f.flags} stream=${f.streamId} len=${f.payload.length}`);
+      this._onFrame(f);
+    }
   }
 
   _onFrame(f) {
@@ -92,6 +101,7 @@ export class GrpcConnection {
     const st = this.streams.get(id);
     if (!st) return;
     this.streams.delete(id);
+    if (this.debug) this.debug(`response headers: ${JSON.stringify(st.headers)}; dataChunks=${st.data.length}; rx=${this._rx.join(" ")}`);
     const status = st.headers["grpc-status"];
     if (status !== undefined && status !== "0") {
       st.reject(new Error(`grpc-status ${status}: ${st.headers["grpc-message"] || ""}`));
@@ -99,7 +109,7 @@ export class GrpcConnection {
     }
     const { messages } = decodeMessages(concat(st.data));
     if (!messages.length) {
-      st.reject(new Error("gRPC: no response message"));
+      st.reject(new Error(`gRPC: no response message; headers=${JSON.stringify(st.headers)}`));
       return;
     }
     st.resolve({ message: messages[0], headers: st.headers });
