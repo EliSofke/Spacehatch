@@ -10,8 +10,9 @@ import { fileURLToPath } from "url";
 import path from "path";
 import { chromium } from "playwright";
 
-const FE = path.resolve(fileURLToPath(new URL("../frontend-gh-wasm", import.meta.url)));
-if (!existsSync(path.join(FE, "gh.wasm"))) {
+const FE = path.resolve(process.env.FE_DIR || fileURLToPath(new URL("../frontend-gh-wasm", import.meta.url)));
+const PAGE = process.env.PAGE || "/index.html";
+if (!existsSync(path.join(FE, path.dirname(PAGE), "gh.wasm"))) {
   console.error("gh.wasm not found — build it first: bash gh-wasm-src/build.sh");
   process.exit(1);
 }
@@ -55,7 +56,7 @@ const errors = [];
 page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
 page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
 
-const target = `${ORIGIN}/index.html?cmd=${encodeURIComponent(CMD)}&proxy=${encodeURIComponent(ORIGIN)}#token=${encodeURIComponent(TOKEN)}`;
+const target = `${ORIGIN}${PAGE}?cmd=${encodeURIComponent(CMD)}&proxy=${encodeURIComponent(ORIGIN)}#token=${encodeURIComponent(TOKEN)}`;
 let ok = false, out = "", exit;
 try {
   await page.goto(target, { waitUntil: "load", timeout: 30000 });

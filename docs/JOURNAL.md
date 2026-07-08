@@ -673,3 +673,14 @@ gh-wasm-src/go.mod, run build.sh, validate via WebAssembly.validate, upload
 artifact) on PRs + main. build.sh is now environment-agnostic (uses `go` on
 PATH). Local runs: `bash gh-wasm-src/build.sh` before the E2E harness, which now
 guards with a clear hint if the module is missing.
+
+## gh terminal wired into the Pages deploy at /gh
+pages.yml now builds gh.wasm (setup-go from go.mod + build.sh) and assembles one
+Pages site: the SSH app stays at /, the gh terminal is served under /gh (copy
+frontend-browser-ssh -> _site/, frontend-gh-wasm -> _site/gh/). Triggers extended
+to gh-wasm-src/** + frontend-gh-wasm/**. Verified locally by mirroring the
+assemble step into /tmp/_site and running the E2E against /gh/index.html through
+the real worker code vs live GitHub: `gh api user` -> login EliSofke, exit 0. The
+E2E harness gained FE_DIR + PAGE knobs for subpath testing. Note: the live gh
+terminal only becomes functional once this branch reaches main (Pages redeploy)
+AND the worker's /gh-api route is deployed (deploy-worker.yml on main).

@@ -3,7 +3,11 @@ name: pages
 on:
   push:
     branches: [main]
-    paths: ["frontend-browser-ssh/**", ".github/workflows/pages.yml"]
+    paths:
+      - "frontend-browser-ssh/**"
+      - "frontend-gh-wasm/**"
+      - "gh-wasm-src/**"
+      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:
@@ -23,6 +27,12 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: gh-wasm-src/go.mod
+          cache-dependency-path: gh-wasm-src/go.sum
+      - name: Build gh.wasm (unmodified go-gh -> GOOS=js)
+        run: bash gh-wasm-src/build.sh
       - name: Stamp build version into app.js
         run: |
           SHA="${GITHUB_SHA:0:7}"
@@ -32,10 +42,15 @@ jobs:
           find frontend-browser-ssh/grpc -name '*.js' -exec \
             sed -i "s|from \"\(\./[A-Za-z0-9_-]*\.js\)\"|from \"\1?v=${SHA}\"|g" {} +
           echo "stamped build: ${STAMP}"
-          grep -n 'const BUILD' frontend-browser-ssh/app.js
+      - name: Assemble Pages site (SSH app at /, gh terminal at /gh)
+        run: |
+          rm -rf _site && mkdir -p _site/gh
+          cp -r frontend-browser-ssh/. _site/
+          cp -r frontend-gh-wasm/. _site/gh/
+          echo "site tree:"; find _site -maxdepth 2 -type f | sort
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: frontend-browser-ssh
+          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4
