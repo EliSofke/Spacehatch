@@ -220,3 +220,30 @@ unknown, to be settled by a live SDK spike (@microsoft/dev-tunnels-ssh +
 - Open items unchanged: deploy the worker (user's Cloudflare account),
   set workerUrl, then live-validate connect() with endpoints and finalize
   bindShell (SSH shell channel).
+
+## spike — Variant D: relay WebSocket auth diagnosis (1006)
+Live log: endpoints resolved via our /tunnel relay (endpoints=1,
+relayUri=wss://euw-data.rel.tunnels.api.visualstudio.com/api/v1/Client/Connect/
+<id>). The SDK then opens the relay WebSocket with subprotocols
+"tunnel-relay-client-v2-dev, tunnel-relay-client" and traces an
+"Authorization: tunnel <token>" header — but every attempt closes with
+WebSocket code 1006 (abnormal, no reason), backs off, and fails.
+
+Two hypotheses tested:
+- ORIGIN rejection — RULED OUT. Handshake probe against the relay data plane
+  with a bogus tunnel returns 404 identically WITH and WITHOUT
+  Origin: https://elisofke.github.io. An origin allowlist would 403 before the
+  404. So the relay does not gate our origin. (Good: no first-party wall.)
+- TOKEN DELIVERY — the remaining cause. Browsers cannot set an Authorization
+  header on WebSocket; the token must ride the Sec-WebSocket-Protocol (or a
+  query param). The trace shows only the two protocol names, no token-bearing
+  subprotocol, plus an Authorization header — i.e. the esm.sh-bundled SDK is on
+  its NODE code path (node-builtin polyfills → env detected as node → uses the
+  header/`ws` path), which a real browser silently drops → relay 1006.
+
+Fix direction: run the SDK's genuine BROWSER path (native WebSocket + token as
+subprotocol, the mechanism vscode.dev uses). That means a proper browser build
+where `ws`/isomorphic-ws resolves to native WebSocket and `process`/`Buffer`
+are not globally injected — NOT esm.sh's node-polyfilled variant. Needs a real
+browser to validate. Alternatives that already ship: Variant E (tokenless) and
+the E+B hybrid (tokenless bare terminal).
