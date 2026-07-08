@@ -617,3 +617,15 @@ Result (build cfe3ddc), reproducible across runs A/B/C + final:
   ★★ FULLY STABLE INTERACTIVE TERMINAL (read+write).
 Test harness: test/e2e-launch.mjs (CODESPACES_TOKEN=… node test/e2e-launch.mjs).
 Cleaned up all test codespaces afterward.
+
+## Cleanup — prune to the final Variant C solution
+Tagged v1.0.0 (full working solution) BEFORE pruning. Removed alternatives and
+ballast: backend/ (Variant A), frontend/, frontend-lite/, frontend-oauth/,
+frontend-pure/, scripts/, root Dockerfile. Removed the dormant OAuth path
+end-to-end: OAuth tab/pane + PKCE code (index.html/app.js), the worker /token
+route, OAuth secrets (wrangler.toml/deploy-worker.yml). Trimmed pages.yml path
+triggers. Rewrote both READMEs and the worker tests for the actual routes
+(/tunnel, /port, /relay) — worker 10/10, gRPC 7/6/12/13. Verified headless after
+pruning: page loads with 0 errors, selftest 20/20, and a full E2E is green
+(StartRemoteServer→pty→shell, read+write, no doubling, stable 45s). Tagged the
+lean final as v1.1.0.
