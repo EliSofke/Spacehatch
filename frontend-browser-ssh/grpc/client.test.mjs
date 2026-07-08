@@ -10,6 +10,7 @@ import { ed25519PublicKeyToOpenSSH, parseOpenSSHEd25519, generateEd25519Key } fr
 import { Writer, Reader } from "./protobuf.js";
 import { encodeMessage, decodeMessages } from "./framing.js";
 import { GrpcConnection } from "./client.js";
+import { MockGrpcServer } from "./mock-server.js";
 
 let pass = 0, fail = 0;
 function eq(actual, expected, name) {
@@ -92,6 +93,21 @@ await new Promise((done) => {
     });
   });
 });
+
+// ---- brick 6b: client vs the shared in-memory MockGrpcServer (loopback) ----
+{
+  let server;
+  const conn = new GrpcConnection((b) => server.feed(b), { authority: "codespace-internal" });
+  server = new MockGrpcServer((b) => conn.feed(b), (reqMsg) => {
+    const r = new Reader(reqMsg); let name = "";
+    while (!r.eof) { const { field, wireType } = r.tag(); if (field === 1) name = r.string(); else r.skip(wireType); }
+    return new Writer().string(1, `hi ${name}`).finish();
+  });
+  const { message } = await conn.call("pkg.Svc", "M", new Writer().string(1, "loop").finish());
+  const r = new Reader(message); let msg = "";
+  while (!r.eof) { const { field, wireType } = r.tag(); if (field === 1) msg = r.string(); else r.skip(wireType); }
+  eq(msg, "hi loop", "loopback vs MockGrpcServer (preface handled)");
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

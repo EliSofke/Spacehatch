@@ -38,6 +38,7 @@
     import { Decoder, encodeHeaderBlock, _internal } from "./hpack.js";
     import { ed25519PublicKeyToOpenSSH, parseOpenSSHEd25519, generateEd25519Key } from "./openssh.js";
     import { GrpcConnection } from "./client.js";
+    import { MockGrpcServer } from "./mock-server.js";
 
     const rows = document.getElementById("rows");
     const summary = document.getElementById("summary");
@@ -119,33 +120,16 @@
 
       group("unary gRPC client, in-browser loopback (brick 6)");
       {
-        // A mock HTTP/2 gRPC server built from our own encoders, wired to the
-        // client in-memory. Proves GrpcConnection drives a full call in-browser.
-        const concat = (cs) => { let n = 0; for (const c of cs) n += c.length; const o = new Uint8Array(n); let p = 0; for (const c of cs) { o.set(c, p); p += c.length; } return o; };
-        class MockServer {
-          constructor(send) { this.send = send; this.reader = new FrameReader(); this.dec = new Decoder(); this.req = new Map(); }
-          feed(bytes) {
-            for (const f of this.reader.push(bytes)) {
-              if (f.type === FRAME.SETTINGS) { if (!(f.flags & FLAG.ACK)) this.send(encodeSettingsAck()); }
-              else if (f.type === FRAME.HEADERS) { this.dec.decode(f.payload); if (!this.req.has(f.streamId)) this.req.set(f.streamId, []); }
-              else if (f.type === FRAME.DATA) { const a = this.req.get(f.streamId) || []; if (f.payload.length) a.push(f.payload); this.req.set(f.streamId, a); if (f.flags & FLAG.END_STREAM) this._respond(f.streamId, a); }
-            }
-          }
-          _respond(id, chunks) {
-            const { messages } = decodeMessages(concat(chunks));
-            const r = new Reader(messages[0]); let name = "";
-            while (!r.eof) { const { field, wireType } = r.tag(); if (field === 1) name = r.string(); else r.skip(wireType); }
-            const body = new Writer().string(1, `hello, ${name}`).uint32(2, 4242).finish();
-            this.send(encodeHeaders(id, encodeHeaderBlock([[":status", "200"], ["content-type", "application/grpc"]]), { endHeaders: true }));
-            this.send(encodeData(id, encodeMessage(body), { endStream: false }));
-            this.send(encodeHeaders(id, encodeHeaderBlock([["grpc-status", "0"]]), { endStream: true, endHeaders: true }));
-          }
-        }
+        // The client drives a full unary call against the shared MockGrpcServer,
+        // wired in-memory — proving GrpcConnection works in the browser engine.
         let server;
         const conn = new GrpcConnection((bytes) => server.feed(bytes), { authority: "codespace-internal" });
-        server = new MockServer((bytes) => conn.feed(bytes));
-        const reqBytes = new Writer().string(1, "browser").finish();
-        const { message } = await conn.call("codespaces.grpc.CodespaceHost", "StartSshServer", reqBytes);
+        server = new MockGrpcServer((bytes) => conn.feed(bytes), (reqMsg) => {
+          const r = new Reader(reqMsg); let name = "";
+          while (!r.eof) { const { field, wireType } = r.tag(); if (field === 1) name = r.string(); else r.skip(wireType); }
+          return new Writer().string(1, `hello, ${name}`).uint32(2, 4242).finish();
+        });
+        const { message } = await conn.call("codespaces.grpc.CodespaceHost", "StartSshServer", new Writer().string(1, "browser").finish());
         const r = new Reader(message); const out = {};
         while (!r.eof) { const { field, wireType } = r.tag(); if (field === 1) out.msg = r.string(); else if (field === 2) out.n = r.uint32(); else r.skip(wireType); }
         eq(out, { msg: "hello, browser", n: 4242 }, "unary call resolves with echoed message");

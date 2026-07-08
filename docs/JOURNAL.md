@@ -414,3 +414,12 @@ remains live-only.
 Remaining: brick 7 (agent service/method + field numbers from cli/cli
 internal/codespaces/grpc) and brick 8 (second SSH session + pty/shell → xterm),
 then live integration (stream to 16634 via the SDK, real agent, real shell).
+
+## fix — Variant C loopback: strip HTTP/2 preface in the mock server
+Browser self-test hung at brick 6: the in-page mock fed the 24-byte connection
+preface straight into FrameReader, which misread "PRI * HTTP/2..." as a giant
+frame and waited forever (node:http2 in the Node test consumes the preface, so
+it never surfaced). Factored the mock into grpc/mock-server.js (MockGrpcServer)
+that skips PREFACE.length bytes first, used by BOTH the Node test and the
+self-test page. Added a Node loopback case so this path is covered without a
+browser. Node suites: grpc 12/12, protocol 13/13, client 6/6.
