@@ -186,6 +186,41 @@ export default {
       });
     }
 
+    // Create (forward) a tunnel port via the management API — CORS-locked, so
+    // proxied here. Mirrors gh's ForwardPort → CreateTunnelPort (PUT .../ports/N).
+    if (request.method === "POST" && url.pathname === "/port") {
+      const origin = request.headers.get("Origin");
+      if (origin && origin !== env.ALLOWED_ORIGIN) {
+        return json({ error: "forbidden_origin" }, 403, env);
+      }
+      let p;
+      try { p = await request.json(); } catch { return json({ error: "invalid_json" }, 400, env); }
+      const { cluster, tunnelId, port, token } = p || {};
+      if (!cluster || !tunnelId || !token || !Number.isInteger(port) ||
+          !/^[a-z0-9]{2,12}$/.test(cluster) || !/^[a-z0-9-]{3,60}$/.test(tunnelId) ||
+          port < 1 || port > 65535) {
+        return json({ error: "invalid_port_params" }, 400, env);
+      }
+      const upstream =
+        `https://${cluster}.rel.tunnels.api.visualstudio.com/tunnels/${tunnelId}/ports/${port}` +
+        `?api-version=2023-09-27-preview`;
+      const r = await fetch(upstream, {
+        method: "PUT",
+        headers: {
+          Authorization: `tunnel ${token}`,
+          "If-Not-Match": "*",
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ portNumber: port, protocol: "http" }),
+      });
+      const body = await r.text();
+      return new Response(JSON.stringify({ status: r.status, body: body.slice(0, 400) }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders(env) },
+      });
+    }
+
     if (request.method !== "POST" || url.pathname !== "/token") {
       return json({ error: "not_found" }, 404, env);
     }

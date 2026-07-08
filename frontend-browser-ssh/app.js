@@ -329,7 +329,7 @@ async function connectTerminal(name, term) {
   // stream authenticated with a generated key registered via the codespace
   // SSH-key header). Encapsulated here on purpose.
   setStatus("relay connected — opening shell …", true);
-  await bindShell(client, term, ssh);
+  await bindShell(client, term, ssh, tp);
   setConnected(true, `connected · ${name}`);
   setStatus("live", true);
 }
@@ -342,7 +342,7 @@ async function connectTerminal(name, term) {
  *      our key as `user`, request a pty + shell, and bind it to xterm.
  * Heavy logging on purpose: the first live run should pinpoint any gap.
  */
-async function bindShell(client, term, ssh) {
+async function bindShell(client, term, ssh, tp) {
   const AGENT_PORT = 16634;
   const b64 = (u8) => { let s = ""; const a = u8 instanceof Uint8Array ? u8 : new Uint8Array(u8); for (const b of a) s += String.fromCharCode(b); return btoa(s); };
   const toU8 = (d) => (d instanceof Uint8Array ? d : d && d.buffer ? new Uint8Array(d.buffer, d.byteOffset || 0, d.byteLength) : new Uint8Array(d));
@@ -435,6 +435,23 @@ async function bindShell(client, term, ssh) {
 
   // ---- 8b: second SSH session → pty + shell → xterm (live frontier) ---------
   setStatus("opening SSH session …", true);
+  // The host doesn't advertise the agent-started sshd port; register it on the
+  // tunnel (management API via worker), like gh's ForwardPort, then refresh.
+  if (tp && tp.managePortsAccessToken) {
+    try {
+      const res = await fetch(`${WORKER_URL}/port`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cluster: tp.clusterId, tunnelId: tp.tunnelId, port, token: tp.managePortsAccessToken }),
+      });
+      const j = await res.json().catch(() => ({}));
+      log(`createTunnelPort(${port}) → worker ${res.status}, api ${j.status}${j.body ? " " + String(j.body).slice(0, 140) : ""}`);
+    } catch (e) {
+      log(`createTunnelPort(${port}) failed: ${e.message}`, "error");
+    }
+  } else {
+    log("no managePortsAccessToken in tunnelProperties — cannot register the ssh port", "error");
+  }
   log(`connecting to forwarded ssh port ${port} (with refreshPorts) …`);
   const sshStream = await openForwarded(port, { refresh: true });
   log(`sshStream API: ${streamAPI(sshStream)}`);

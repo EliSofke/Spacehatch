@@ -536,3 +536,16 @@ First attempt (cheap): openForwarded now calls client.refreshPorts() before
 waiting and logs the available forwardedPorts, since codespaces usually
 auto-forwards a newly-listening port once refreshed. If 2222 still doesn't
 appear, next step is a CreateTunnelPort management call (worker-proxied) like gh.
+
+## 8b — register the sshd port via management API (CreateTunnelPort, worker-proxied)
+refreshPorts alone didn't surface port 2222 (host acked RefreshPorts but never
+forwarded it → waitForForwardedPort timed out). gh's ForwardPort creates the
+port first: PUT https://{cluster}.rel.tunnels.api.visualstudio.com/tunnels/
+{tunnelId}/ports/{port}?api-version=2023-09-27-preview, Authorization: tunnel
+<managePortsAccessToken>, If-Not-Match: *, body {portNumber, protocol:"http"}
+(format + auth confirmed against the existing /tunnel route and the mgmt SDK).
+Added worker route POST /port that proxies exactly this; bindShell now calls it
+for the agent-started port before refreshPorts + connect, and logs the API
+status. tp (tunnelProperties, incl. managePortsAccessToken) threaded into
+bindShell. Next live run should show createTunnelPort → api 200 and port 2222
+becoming connectable, then the second SSH session.
