@@ -462,3 +462,16 @@ The stream/session/channel API surface is logged on first run (streamAPI helper)
 because the ssh bundle is partly minified; 8b request helper names
 (requestTerminal/requestShell) are best-effort and may need adjustment from the
 first live log. 8a should be solid (bricks 1–7 verified). Live-only from here.
+
+## fix — Variant C 8a: use SshChannel directly (Duplex broken in browser)
+Live log: connect() resolved, ports forwarded (incl. 16634), ECDSA key made,
+forwarded-tcpip channel to 16634 opened. But connectToForwardedPort returns an
+SshStream (extends node:stream.Duplex); esm.sh's stream polyfill is incomplete
+in the browser → no on()/write(), and SshStream's internal push() throws
+(unhandledrejection from `xo` = SshStream). Fix: SshStream stores the real
+SshChannel as `.channel`. wireStream now (a) for the SshStream wrapper, hijacks
+`stream.push` to route inbound bytes to our gRPC client while SshStream still
+calls channel.adjustWindow, and (b) for a raw SshChannel, subscribes via
+onDataReceived + adjustWindow. Outbound goes via channel.send(), serialized.
+Also logs .channel presence + channel API. This should let 8a (gRPC
+StartRemoteServerAsync over 16634) complete; 8b reuses the same wiring.

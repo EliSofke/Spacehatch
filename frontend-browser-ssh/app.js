@@ -346,17 +346,34 @@ async function bindShell(client, term, ssh) {
   const AGENT_PORT = 16634;
   const b64 = (u8) => { let s = ""; const a = u8 instanceof Uint8Array ? u8 : new Uint8Array(u8); for (const b of a) s += String.fromCharCode(b); return btoa(s); };
   const toU8 = (d) => (d instanceof Uint8Array ? d : d && d.buffer ? new Uint8Array(d.buffer, d.byteOffset || 0, d.byteLength) : new Uint8Array(d));
-  const toBuf = (u8) => (typeof Buffer !== "undefined" ? Buffer.from(u8) : u8);
+  const toBuf = (u8) => (typeof globalThis.Buffer !== "undefined" ? globalThis.Buffer.from(u8) : u8);
   const streamAPI = (s) => { const p = s && Object.getPrototypeOf(s); return p ? Object.getOwnPropertyNames(p).filter((n) => typeof s[n] === "function").slice(0, 24).join(",") : typeof s; };
   const openForwarded = async (port) => {
     try { await client.waitForForwardedPort(port); } catch (e) { log(`waitForForwardedPort(${port}) note: ${e.message}`); }
     return client.connectToForwardedPort(port);
   };
-  const wireStream = (stream, onBytes) => {
-    if (typeof stream.on === "function") stream.on("data", (d) => onBytes(toU8(d)));
-    else if (typeof stream.addEventListener === "function") stream.addEventListener("data", (e) => onBytes(toU8(e.data)));
-    else log("stream has no on()/addEventListener() — check streamAPI log", "error");
-    return (bytes) => stream.write(toBuf(bytes));
+  // The SDK's SshStream extends node:stream.Duplex, which esm.sh polyfills
+  // incompletely in the browser (no working on()/write(); its internal push()
+  // throws). But SshStream stores the real SshChannel as `.channel` and does
+  // the SSH flow-control. We hijack push() to route inbound bytes to our
+  // handler (SshStream still calls channel.adjustWindow for us) and send
+  // outbound bytes via channel.send(), serialized to preserve order.
+  const wireStream = (obj, onBytes) => {
+    const channel = (obj && obj.channel) || obj;
+    if (channel && typeof channel.send === "function") {
+      if (obj.channel) {
+        // SshStream wrapper: hijack push() (it feeds decoded chunks + adjusts window)
+        obj.push = (chunk) => { if (chunk != null) onBytes(toU8(chunk)); return true; };
+      } else if (typeof channel.onDataReceived === "function") {
+        // Raw SshChannel: subscribe and replenish the window ourselves.
+        channel.onDataReceived((data) => { onBytes(toU8(data)); if (typeof channel.adjustWindow === "function") channel.adjustWindow(data.length); });
+      }
+      let chain = Promise.resolve();
+      return (bytes) => { const b = toBuf(bytes); chain = chain.then(() => channel.send(b)).catch((e) => log(`channel.send: ${e.message}`, "error")); return chain; };
+    }
+    if (typeof obj.on === "function") { obj.on("data", (d) => onBytes(toU8(d))); return (bytes) => obj.write(toBuf(bytes)); }
+    log("stream: no .channel/.send and no on() — see streamAPI log", "error");
+    return () => {};
   };
 
   const { GrpcConnection } = await import("./grpc/client.js");
@@ -374,7 +391,7 @@ async function bindShell(client, term, ssh) {
   setStatus("starting SSH server via agent (gRPC) …", true);
   log(`connecting to forwarded agent port ${AGENT_PORT} …`);
   const agentStream = await openForwarded(AGENT_PORT);
-  log(`agentStream API: ${streamAPI(agentStream)}`);
+  log(`agentStream API: ${streamAPI(agentStream)} | has .channel=${!!(agentStream && agentStream.channel)}${agentStream && agentStream.channel ? " channel:" + streamAPI(agentStream.channel) : ""}`);
   const conn = new GrpcConnection(wireStream(agentStream, (u8) => conn.feed(u8)), { authority: "codespace-internal" });
   log("calling StartRemoteServerAsync …");
   const { port, user } = await startRemoteServer(conn, openssh);
