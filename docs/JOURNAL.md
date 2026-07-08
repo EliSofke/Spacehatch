@@ -562,3 +562,16 @@ session.onAuthenticating accepts the host key; authenticate({username, publicKey
 [keyPair]}); session.openChannel() (defaults to a session channel); pty-req
 (best-effort) + shell via ChannelRequestMessage; channel.onDataReceived → xterm,
 term.onData → channel.send. Live-only; watch for "authenticate → true" then shell.
+
+## MILESTONE — 8b SSH handshake real; fix relay via Durable Object
+Fresh bare codespace (quick-horse): StartRemoteServer OK, createTunnelPort →
+"Forwarded port 2222 is ready", channel #2 to 127.0.0.1:2222 opened, and the
+channel carried a REAL SSH handshake — closed remotely with S:1321 R:3323 (we
+sent 1321 bytes, received 3323). So the BaseStream adapter + second SSH session
+exchange data with the codespace sshd. The only blocker is relay instability:
+the tunnel session (bo) still drops every ~10s ("Error reading from stream")
+and kills the handshake mid-flight. ctx.waitUntil wasn't enough — a plain Worker
+can't hold the long-lived outbound relay WS. Refactored the /relay bridge into a
+Durable Object (RelayProxy) keyed by tunnelId; /relay/* now forwards to the DO,
+which holds both WebSockets for the whole session. wrangler.toml gains the DO
+binding + a new_sqlite_classes migration (free-tier friendly). Worker tests 9/9.

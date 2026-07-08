@@ -12,3 +12,13 @@ ALLOWED_ORIGIN = "https://elisofke.github.io"
 # deploy trigger: 2026-07-08T07:23:47Z
 
 # redeploy after subdomain registration: 07:27:53Z
+
+# Durable Object: robust, long-lived WebSocket relay bridge (replaces the plain
+# in-worker proxy that dropped the tunnel every ~10s).
+[[durable_objects.bindings]]
+name = "RELAY"
+class_name = "RelayProxy"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RelayProxy"]

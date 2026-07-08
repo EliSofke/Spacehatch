@@ -73,72 +73,12 @@ export default {
           !/^[a-z0-9]{2,12}$/.test(cluster) || !/^[a-z0-9-]{3,60}$/.test(tunnelId)) {
         return new Response("bad relay path", { status: 400 });
       }
-
-      // The SDK's browser path appends the tunnel connect token as an extra
-      // subprotocol; pull it out here and use it as the upstream header auth.
-      const KNOWN = new Set(["tunnel-relay-client-v2-dev", "tunnel-relay-client"]);
-      const offered = (request.headers.get("Sec-WebSocket-Protocol") || "")
-        .split(",").map((s) => s.trim()).filter(Boolean);
-      const token = offered.find((p) => !KNOWN.has(p));
-      const knownOffered = offered.filter((p) => KNOWN.has(p)).join(", ") ||
-        "tunnel-relay-client-v2-dev, tunnel-relay-client";
-      if (!token) {
-        return new Response("missing token subprotocol", { status: 401 });
-      }
-
-      const upstreamUrl =
-        `https://${cluster}-data.rel.tunnels.api.visualstudio.com/api/v1/Client/Connect/${tunnelId}`;
-      let upstreamResp;
-      try {
-        upstreamResp = await fetch(upstreamUrl, {
-          headers: {
-            Upgrade: "websocket",
-            Connection: "Upgrade",
-            "Sec-WebSocket-Version": "13",
-            "Sec-WebSocket-Protocol": knownOffered,
-            Authorization: `tunnel ${token}`,
-          },
-        });
-      } catch (e) {
-        return new Response(`upstream connect error: ${e.message}`, { status: 502 });
-      }
-      const upstream = upstreamResp.webSocket;
-      if (!upstream) {
-        return new Response(`upstream did not upgrade (status ${upstreamResp.status})`, { status: 502 });
-      }
-      upstream.accept();
-
-      const pair = new WebSocketPair();
-      const clientSide = pair[0];
-      const serverSide = pair[1];
-      serverSide.accept();
-
-      // Only 1000 and 3000-4999 are valid close codes to send; sanitize.
-      const safeCode = (c) => (c === 1000 || (c >= 3000 && c <= 4999) ? c : 1000);
-      const closeSafely = (ws, c, r) => { try { ws.close(safeCode(c), r ? String(r).slice(0, 120) : undefined); } catch { /* already closed */ } };
-
-      // Keep the Worker invocation (and thus the outbound relay WebSocket)
-      // alive until either side closes. Without this, a plain Worker tears the
-      // upstream WebSocket down shortly after fetch() returns, which showed up
-      // as the tunnel session dropping every ~10s and reconnecting.
-      let resolveDone;
-      const done = new Promise((res) => { resolveDone = res; });
-      const finish = () => { try { resolveDone(); } catch { /* already */ } };
-
-      serverSide.addEventListener("message", (e) => { try { upstream.send(e.data); } catch { /* dropped */ } });
-      upstream.addEventListener("message", (e) => { try { serverSide.send(e.data); } catch { /* dropped */ } });
-      serverSide.addEventListener("close", (e) => { closeSafely(upstream, e.code, e.reason); finish(); });
-      upstream.addEventListener("close", (e) => { closeSafely(serverSide, e.code, e.reason); finish(); });
-      serverSide.addEventListener("error", () => { closeSafely(upstream, 1011); finish(); });
-      upstream.addEventListener("error", () => { closeSafely(serverSide, 1011); finish(); });
-      if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(done);
-
-      const negotiated = upstreamResp.headers.get("Sec-WebSocket-Protocol") || "tunnel-relay-client-v2-dev";
-      return new Response(null, {
-        status: 101,
-        webSocket: clientSide,
-        headers: { "Sec-WebSocket-Protocol": negotiated },
-      });
+      // Hand the WebSocket bridge to a Durable Object (keyed by tunnel). A plain
+      // Worker tears the outbound relay WS down shortly after fetch() returns
+      // (the ~10s "Error reading from stream" drops); a DO holds it for the
+      // whole session.
+      const id = env.RELAY.idFromName(tunnelId);
+      return env.RELAY.get(id).fetch(request);
     }
 
     // ---- /tunnel : proxy the tunnels management GET (CORS-locked to --------
@@ -269,3 +209,72 @@ export default {
     return json({ access_token: data.access_token, scope: data.scope || "" }, 200, env);
   },
 };
+
+
+// ---- Durable Object: holds the relay WebSocket bridge for the whole session --
+export class RelayProxy {
+  constructor(state, env) { this.state = state; this.env = env; }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+    const parts = url.pathname.split("/").filter(Boolean); // [relay, cluster, tunnelId]
+    const cluster = parts[1];
+    const tunnelId = parts[2];
+
+    // The SDK appends the tunnel connect token as an extra WS subprotocol.
+    const KNOWN = new Set(["tunnel-relay-client-v2-dev", "tunnel-relay-client"]);
+    const offered = (request.headers.get("Sec-WebSocket-Protocol") || "")
+      .split(",").map((s) => s.trim()).filter(Boolean);
+    const token = offered.find((p) => !KNOWN.has(p));
+    const knownOffered = offered.filter((p) => KNOWN.has(p)).join(", ") ||
+      "tunnel-relay-client-v2-dev, tunnel-relay-client";
+    if (!token) return new Response("missing token subprotocol", { status: 401 });
+
+    const upstreamUrl =
+      `https://${cluster}-data.rel.tunnels.api.visualstudio.com/api/v1/Client/Connect/${tunnelId}`;
+    let upstreamResp;
+    try {
+      upstreamResp = await fetch(upstreamUrl, {
+        headers: {
+          Upgrade: "websocket",
+          Connection: "Upgrade",
+          "Sec-WebSocket-Version": "13",
+          "Sec-WebSocket-Protocol": knownOffered,
+          Authorization: `tunnel ${token}`,
+        },
+      });
+    } catch (e) {
+      return new Response(`upstream connect error: ${e.message}`, { status: 502 });
+    }
+    const upstream = upstreamResp.webSocket;
+    if (!upstream) {
+      return new Response(`upstream did not upgrade (status ${upstreamResp.status})`, { status: 502 });
+    }
+    upstream.accept();
+
+    const pair = new WebSocketPair();
+    const clientSide = pair[0];
+    const serverSide = pair[1];
+    serverSide.accept();
+
+    const safeCode = (c) => (c === 1000 || (c >= 3000 && c <= 4999) ? c : 1000);
+    const closeSafely = (ws, c, r) => { try { ws.close(safeCode(c), r ? String(r).slice(0, 120) : undefined); } catch { /* already closed */ } };
+
+    serverSide.addEventListener("message", (e) => { try { upstream.send(e.data); } catch { /* dropped */ } });
+    upstream.addEventListener("message", (e) => { try { serverSide.send(e.data); } catch { /* dropped */ } });
+    serverSide.addEventListener("close", (e) => closeSafely(upstream, e.code, e.reason));
+    upstream.addEventListener("close", (e) => closeSafely(serverSide, e.code, e.reason));
+    serverSide.addEventListener("error", () => closeSafely(upstream, 1011));
+    upstream.addEventListener("error", () => closeSafely(serverSide, 1011));
+
+    // Keep references so the bridge isn't collected while the session is live.
+    this._bridge = { serverSide, upstream };
+
+    const negotiated = upstreamResp.headers.get("Sec-WebSocket-Protocol") || "tunnel-relay-client-v2-dev";
+    return new Response(null, {
+      status: 101,
+      webSocket: clientSide,
+      headers: { "Sec-WebSocket-Protocol": negotiated },
+    });
+  }
+}
