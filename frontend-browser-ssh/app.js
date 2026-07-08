@@ -258,8 +258,12 @@ async function connectTerminal(name, term) {
   // The tunnel's endpoints (clientRelayUri, hostPublicKeys) come from the
   // tunnels management API, which is CORS-locked to vscode.dev — so we fetch
   // them through our relay (worker /tunnel). This is the one required function.
-  if (!WORKER_URL) {
-    throw new Error("workerUrl not configured — the terminal needs the /tunnel relay (tunnels API is CORS-locked to vscode.dev)");
+  if (!WORKER_URL || WORKER_URL.includes("YOUR-SUBDOMAIN")) {
+    throw new Error(
+      "workerUrl is not configured (still the placeholder). Deploy auth-worker/ " +
+      "(npx wrangler deploy — no secrets needed in PAT-only mode) and set its " +
+      "*.workers.dev URL as workerUrl in index.html.",
+    );
   }
   setStatus("resolving tunnel endpoints via relay …", true);
   const relayRes = await fetch(`${WORKER_URL}/tunnel`, {
