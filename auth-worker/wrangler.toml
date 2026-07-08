@@ -8,3 +8,5 @@ compatibility_date = "2025-01-01"
 # Public, non-secret config can live as a plain var:
 [vars]
 ALLOWED_ORIGIN = "https://elisofke.github.io"
+
+# deploy trigger: 2026-07-08T07:23:47Z
