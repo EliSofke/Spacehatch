@@ -18,6 +18,7 @@
 
 const cfg = window.SPACEHATCH_D_CONFIG || {};
 const params = new URLSearchParams(location.search);
+const WORKER_URL = (cfg.workerUrl || cfg.authWorkerUrl || "").replace(/\/$/, "");
 
 const els = {
   tabPat: document.getElementById("tab-pat"),
@@ -146,7 +147,7 @@ async function handleOAuthCallback(code, returnedState) {
   sessionStorage.removeItem("sh_d_verifier");
   setStatus("completing sign-in …", true);
   try {
-    const res = await fetch(`${(cfg.authWorkerUrl || "").replace(/\/$/, "")}/token`, {
+    const res = await fetch(`${WORKER_URL}/token`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code, code_verifier: verifier }),
@@ -249,14 +250,32 @@ async function connectTerminal(name, term) {
   log(`SDK loaded: connections[${Object.keys(connections).slice(0,8).join(",")}]`);
   log(`SDK loaded: ssh[${Object.keys(ssh).filter(k=>/Ssh/.test(k)).slice(0,8).join(",")}]`);
 
-  // Build the minimal Tunnel object the client needs from tunnelProperties.
+  // The tunnel's endpoints (clientRelayUri, hostPublicKeys) come from the
+  // tunnels management API, which is CORS-locked to vscode.dev — so we fetch
+  // them through our relay (worker /tunnel). This is the one required function.
+  if (!WORKER_URL) {
+    throw new Error("workerUrl not configured — the terminal needs the /tunnel relay (tunnels API is CORS-locked to vscode.dev)");
+  }
+  setStatus("resolving tunnel endpoints via relay …", true);
+  const relayRes = await fetch(`${WORKER_URL}/tunnel`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cluster: tp.clusterId, tunnelId: tp.tunnelId, token: tp.connectAccessToken }),
+  });
+  if (!relayRes.ok) {
+    const t = await relayRes.text().catch(() => "");
+    throw new Error(`tunnel relay failed (${relayRes.status}): ${t.slice(0,160)}`);
+  }
+  const fetchedTunnel = await relayRes.json();
+  const epCount = (fetchedTunnel.endpoints || []).length;
+  log(`relay returned tunnel: endpoints=${epCount} relayUri=${epCount ? fetchedTunnel.endpoints[0].clientRelayUri : "-"}`);
+
+  // Full Tunnel object for connect(): the management tunnel + the connect token.
   const tunnel = {
+    ...fetchedTunnel,
     tunnelId: tp.tunnelId,
     clusterId: tp.clusterId,
     accessTokens: { connect: tp.connectAccessToken },
-    // The relay/management endpoints are resolved by the client; domain is
-    // carried for port-forwarding URL construction.
-    domain: tp.domain,
   };
 
   setStatus("connecting to the codespace relay …", true);

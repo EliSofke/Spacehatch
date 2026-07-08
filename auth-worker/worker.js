@@ -43,6 +43,41 @@ export default {
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders(env) });
     }
+
+    // ---- /tunnel : proxy the tunnels management GET (CORS-locked to --------
+    //      vscode.dev) so the browser can obtain endpoints (clientRelayUri,
+    //      hostPublicKeys) for TunnelRelayTunnelClient.connect().
+    if (request.method === "POST" && url.pathname === "/tunnel") {
+      const origin = request.headers.get("Origin");
+      if (origin && origin !== env.ALLOWED_ORIGIN) {
+        return json({ error: "forbidden_origin" }, 403, env);
+      }
+      let p;
+      try {
+        p = await request.json();
+      } catch {
+        return json({ error: "invalid_json" }, 400, env);
+      }
+      const { cluster, tunnelId, token } = p || {};
+      // cluster ids are short lowercase (e.g. euw); tunnelId is [a-z0-9-].
+      if (!cluster || !tunnelId || !token ||
+          !/^[a-z0-9]{2,12}$/.test(cluster) || !/^[a-z0-9-]{3,60}$/.test(tunnelId)) {
+        return json({ error: "invalid_tunnel_params" }, 400, env);
+      }
+      const upstream =
+        `https://${cluster}.rel.tunnels.api.visualstudio.com/tunnels/${tunnelId}` +
+        `?api-version=2023-09-27-preview&includePorts=true`;
+      const r = await fetch(upstream, {
+        headers: { Authorization: `tunnel ${token}`, Accept: "application/json" },
+      });
+      const body = await r.text();
+      // Pass the tunnels service response through with our CORS headers.
+      return new Response(body, {
+        status: r.status,
+        headers: { "Content-Type": "application/json", ...corsHeaders(env) },
+      });
+    }
+
     if (request.method !== "POST" || url.pathname !== "/token") {
       return json({ error: "not_found" }, 404, env);
     }

@@ -10,10 +10,18 @@ Stateless: no sessions, no storage, ~90 lines.
 
 ## Endpoints
 
-| Method | Path     | Body                        | Response                     |
-|--------|----------|-----------------------------|------------------------------|
-| OPTIONS| `*`      | —                           | CORS preflight (204)         |
-| POST   | `/token` | `{ code, code_verifier }`   | `{ access_token, scope }`    |
+| Method | Path      | Body                              | Response                     |
+|--------|-----------|-----------------------------------|------------------------------|
+| OPTIONS| `*`       | —                                 | CORS preflight (204)         |
+| POST   | `/token`  | `{ code, code_verifier }`         | `{ access_token, scope }`    |
+| POST   | `/tunnel` | `{ cluster, tunnelId, token }`    | the tunnels Tunnel object (with `endpoints`) |
+
+`/token` is for the OAuth option (Variant C / D-OAuth). `/tunnel` proxies the
+Dev Tunnels management GET — which is CORS-locked to `vscode.dev` — so a
+browser page can obtain the tunnel `endpoints` (`clientRelayUri`,
+`hostPublicKeys`) needed by `TunnelRelayTunnelClient.connect()`. `/tunnel` is
+required for the browser-SSH terminal (Variant D) in **both** auth modes; it
+sees only the short-lived tunnel connect token, never the GitHub token.
 
 ## Deploy on Cloudflare Workers
 

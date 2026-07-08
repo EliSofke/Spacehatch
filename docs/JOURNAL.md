@@ -168,3 +168,18 @@ unknown, to be settled by a live SDK spike (@microsoft/dev-tunnels-ssh +
   codespace SSH-key header) confirmed only in a real browser + running codespace.
   bindShell() throws deliberately until then. No release tag (terminal stage
   unvalidated).
+
+## spike — Variant D: relay endpoint resolution (live-log driven)
+- Live log from the deployed page: SDK loads fine; client.connect() fails with
+  "Tunnel endpoints cannot be null" (NOT a CORS/origin rejection). Confirmed:
+  connect() needs tunnel.endpoints (clientRelayUri, hostPublicKeys), which come
+  from the tunnels management API — CORS-locked to vscode.dev.
+- Settles the earlier open question definitively: the browser-SSH terminal needs
+  exactly ONE relay function (PAT mode) / two (OAuth). Not zero.
+- Added POST /tunnel to the worker: proxies the management GET with
+  Authorization: tunnel <connectAccessToken>, returns the Tunnel (with
+  endpoints) + CORS. Sees only the short-lived tunnel token, never the GitHub
+  token. Worker tests 9/9 + /tunnel validation checks pass.
+- app.js now fetches endpoints via /tunnel and passes the full tunnel to
+  connect(). Next live step: confirm connect() resolves with endpoints, then
+  finalize bindShell (SSH shell channel).

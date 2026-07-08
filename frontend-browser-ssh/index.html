@@ -137,9 +137,11 @@
   <script>
     // Configuration. URL params ?owner=&repo= override the defaults.
     window.SPACEHATCH_D_CONFIG = {
-      // OAuth (only needed for the "Sign in with GitHub" option):
+      // OAuth (only for the "Sign in with GitHub" option):
       clientId: "YOUR_OAUTH_APP_CLIENT_ID",
-      authWorkerUrl: "https://spacehatch-auth.YOUR-SUBDOMAIN.workers.dev",
+      // URL of the deployed worker. Used for /tunnel (required for the
+      // terminal, both auth modes) and /token (OAuth only). See auth-worker/.
+      workerUrl: "https://spacehatch-auth.YOUR-SUBDOMAIN.workers.dev",
       // Defaults for the target repository:
       owner: "EliSofke",
       repo: "Spacehatch",
