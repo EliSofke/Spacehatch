@@ -19,3 +19,5 @@ auth-worker/node_modules/
 # Browser-SSH spike: SDKs loaded from esm.sh at runtime
 frontend-browser-ssh/vendor/
 frontend-browser-ssh/bundle-src/
+test/node_modules/
+node_modules/

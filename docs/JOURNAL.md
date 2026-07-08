@@ -586,3 +586,15 @@ requestType="pty-req" but NO pty payload (TERM/cols/rows/modes) — malformed, s
 sshd drops the connection. Removed pty-req; request "shell" only (needs no
 payload) to get bytes flowing. Proper pty-req to follow. DO relay held stable
 through the whole handshake.
+
+## E2E autonomy + proper pty-req
+Confirmed I can drive the deployed page headless (Playwright + Chromium in the
+container; WebSocket egress works incl. the full real relay bridge). Baseline
+run (build 4c2e162, shell-only) went green through "shell bound to xterm" and
+READ ok (Ubuntu MOTD), but terminal scraping via .xterm-rows was unreliable.
+Added window.__shellOut (decoded output mirror) + window.__shellSend for the
+harness. Implemented a proper pty-req: subclass ssh.ChannelRequestMessage,
+onWrite appends RFC 4254 §6.2 payload (TERM, cols, rows, wpx=0, hpx=0, modes=
+TTY_OP_END) — like CommandRequestMessage does for exec. Then shell. Harness
+test/e2e-launch.mjs types PROBE_CMD via the xterm textarea (real path) and
+falls back to __shellSend, checking window.__shellOut for a marker.

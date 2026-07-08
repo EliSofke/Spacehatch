@@ -486,14 +486,45 @@ async function bindShell(client, term, ssh, tp) {
   setStatus("SSH: opening shell …", true);
   log("second SSH: opening channel …");
   const channel = await withTimeout(session.openChannel(), 12000, "openChannel");
-  log(`shell channel opened (${streamAPI(channel)})`);
-  // NOTE: a bare ChannelRequestMessage with requestType "pty-req" but no pty
-  // payload is malformed and makes sshd drop the connection. Skip pty for now
-  // (shell needs no payload); a proper pty-req can be added once this works.
-  const shellReq = new ssh.ChannelRequestMessage();
-  shellReq.requestType = "shell"; shellReq.wantReply = true;
+  log(`shell channel opened`);
+  const cols = term.cols || 80, rows = term.rows || 24;
+
+  // Proper pty-req: RFC 4254 §6.2 payload (TERM, cols, rows, wpx, hpx, modes).
+  // A bare requestType="pty-req" with no payload is malformed and drops sshd.
+  const PtyRequest = class extends ssh.ChannelRequestMessage {
+    constructor(t, c, r) { super("pty-req", true); this._t = t; this._c = c; this._r = r; }
+    onWrite(w) {
+      super.onWrite(w);
+      w.writeString(this._t, "ascii");
+      w.writeUInt32(this._c); w.writeUInt32(this._r);
+      w.writeUInt32(0); w.writeUInt32(0);
+      w.writeString("\u0000"); // terminal modes: just TTY_OP_END
+    }
+  };
+  try {
+    const pok = await withTimeout(channel.request(new PtyRequest("xterm-256color", cols, rows)), 10000, "pty-req");
+    log(`pty-req → ${pok}`, pok ? "ok" : "error");
+  } catch (e) { log(`pty-req failed (${e.message}) — continuing`, "error"); }
+
+  const shellReq = new ssh.ChannelRequestMessage("shell", true);
   const shellOk = await withTimeout(channel.request(shellReq), 10000, "shell");
   log(`shell → ${shellOk}`, shellOk ? "ok" : "error");
+
+  // Wire the shell channel to xterm. Also mirror output into a page-accessible
+  // buffer and expose a direct sender — used only by the headless E2E test.
+  const dec = new TextDecoder();
+  window.__shellOut = "";
+  window.__shellSend = (s) => { try { channel.send(toBuf(new TextEncoder().encode(s))); } catch { /* */ } };
+  window.__term = term;
+  if (typeof channel.onDataReceived === "function") {
+    channel.onDataReceived((d) => {
+      const u8 = toU8(d);
+      term.write(u8);
+      try { window.__shellOut += dec.decode(u8, { stream: true }); } catch { /* */ }
+      if (typeof channel.adjustWindow === "function") channel.adjustWindow(u8.length);
+    });
+  }
+  term.onData((data) => { try { channel.send(toBuf(new TextEncoder().encode(data))); } catch (e) { log(`shell send: ${e.message}`); } });
 
   // Wire the shell channel to xterm.
   if (typeof channel.onDataReceived === "function") {
