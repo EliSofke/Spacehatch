@@ -575,3 +575,14 @@ can't hold the long-lived outbound relay WS. Refactored the /relay bridge into a
 Durable Object (RelayProxy) keyed by tunnelId; /relay/* now forwards to the DO,
 which holds both WebSockets for the whole session. wrangler.toml gains the DO
 binding + a new_sqlite_classes migration (free-tier friendly). Worker tests 9/9.
+
+## MILESTONE — 8b: second SSH connect + AUTH + openChannel all succeed!
+Diagnostics (build 3d4dd87): "shell channel opened" printed, i.e. session.connect
+✓, authenticate ✓ (we are logged in to the codespace sshd!), openChannel ✓. Then
+the forwarded-tcpip channel #2 (transport to 2222) closed remotely 100ms later
+(S:1321 R:3323), pty-req timed out, shell failed "Error writing to stream: o
+disposed". Root cause: our pty-req was a bare ChannelRequestMessage with
+requestType="pty-req" but NO pty payload (TERM/cols/rows/modes) — malformed, so
+sshd drops the connection. Removed pty-req; request "shell" only (needs no
+payload) to get bytes flowing. Proper pty-req to follow. DO relay held stable
+through the whole handshake.

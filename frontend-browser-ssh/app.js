@@ -487,16 +487,9 @@ async function bindShell(client, term, ssh, tp) {
   log("second SSH: opening channel …");
   const channel = await withTimeout(session.openChannel(), 12000, "openChannel");
   log(`shell channel opened (${streamAPI(channel)})`);
-  const cols = term.cols || 80, rows = term.rows || 24;
-  // pty-req (best-effort) then shell, via ChannelRequestMessage.
-  try {
-    const pty = new ssh.ChannelRequestMessage();
-    pty.requestType = "pty-req"; pty.wantReply = true;
-    if ("terminalType" in pty) pty.terminalType = "xterm-256color";
-    if ("columns" in pty) { pty.columns = cols; pty.rows = rows; }
-    const pok = await withTimeout(channel.request(pty), 10000, "pty-req");
-    log(`pty-req → ${pok}`);
-  } catch (e) { log(`pty-req not accepted (${e.message}) — continuing without pty`); }
+  // NOTE: a bare ChannelRequestMessage with requestType "pty-req" but no pty
+  // payload is malformed and makes sshd drop the connection. Skip pty for now
+  // (shell needs no payload); a proper pty-req can be added once this works.
   const shellReq = new ssh.ChannelRequestMessage();
   shellReq.requestType = "shell"; shellReq.wantReply = true;
   const shellOk = await withTimeout(channel.request(shellReq), 10000, "shell");
