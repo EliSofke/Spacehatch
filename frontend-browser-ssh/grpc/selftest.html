@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Spacehatch — gRPC brick self-test</title>
+  <style>
+    :root { --bg:#10151a; --panel:#161d24; --seam:#26303a; --ink:#dfe6ea; --dim:#7d8b96; --ok:#57c97a; --bad:#e0574a; --phos:#f2a33c; --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace; }
+    body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--mono); font-size:14px; line-height:1.5; }
+    .wrap { width:min(820px, calc(100% - 2rem)); margin:0 auto; padding:1.4rem 0 3rem; }
+    h1 { font-size:1.15rem; font-weight:600; }
+    h1 .c { color:var(--phos); }
+    .sub { color:var(--dim); margin:.2rem 0 1.2rem; }
+    #summary { font-size:1rem; padding:.7rem 1rem; border:1px solid var(--seam); border-radius:8px; background:var(--panel); margin-bottom:1rem; }
+    #summary.ok { border-color:var(--ok); }
+    #summary.bad { border-color:var(--bad); }
+    table { width:100%; border-collapse:collapse; }
+    td { padding:.35rem .6rem; border-bottom:1px solid var(--seam); vertical-align:top; }
+    td.status { width:3rem; font-weight:600; }
+    .pass { color:var(--ok); }
+    .fail { color:var(--bad); }
+    td.detail { color:var(--dim); font-size:.82rem; white-space:pre-wrap; word-break:break-all; }
+    .grp { color:var(--phos); padding-top:1rem; font-size:.8rem; letter-spacing:.06em; text-transform:uppercase; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>spacehatch · <span class="c">gRPC brick self-test</span></h1>
+    <p class="sub">Runs the Variant C protocol bricks (protobuf, gRPC framing, HTTP/2, HPACK) against RFC 7541 vectors, in this browser.</p>
+    <div id="summary">running…</div>
+    <table><tbody id="rows"></tbody></table>
+  </div>
+
+  <script type="module">
+    import { Writer, Reader } from "./protobuf.js";
+    import { encodeMessage, decodeMessages } from "./framing.js";
+    import { FRAME, FLAG, encodeSettings, encodeHeaders, encodeData, FrameReader } from "./http2.js";
+    import { Decoder, encodeHeaderBlock, _internal } from "./hpack.js";
+
+    const rows = document.getElementById("rows");
+    const summary = document.getElementById("summary");
+    let pass = 0, fail = 0;
+    const hex = (u8) => Array.from(u8).map((b) => b.toString(16).padStart(2, "0")).join("");
+    const bytes = (s) => Uint8Array.from(s.replace(/\s+/g, "").match(/../g).map((h) => parseInt(h, 16)));
+    function group(name) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td class="grp" colspan="3">${name}</td>`;
+      rows.appendChild(tr);
+    }
+    function eq(actual, expected, name) {
+      const a = JSON.stringify(actual), e = JSON.stringify(expected);
+      const ok = a === e;
+      ok ? pass++ : fail++;
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        `<td class="status ${ok ? "pass" : "fail"}">${ok ? "PASS" : "FAIL"}</td>` +
+        `<td>${name}</td>` +
+        `<td class="detail">${ok ? "" : `expected ${e}\nactual   ${a}`}</td>`;
+      rows.appendChild(tr);
+    }
+
+    try {
+      group("protobuf (canonical vectors)");
+      eq(hex(new Writer().uint32(1, 150).finish()), "089601", "varint 150 → 08 96 01");
+      eq(hex(new Writer().string(2, "testing").finish()), "1207" + hex(new TextEncoder().encode("testing")), "string 'testing'");
+      {
+        const body = new Writer().string(1, "abc").uint32(2, 22).bool(3, true).finish();
+        const r = new Reader(body); const f = {};
+        while (!r.eof) { const { field, wireType } = r.tag(); if (field === 1) f.k = r.string(); else if (field === 2) f.p = r.uint32(); else if (field === 3) f.b = r.bool(); else r.skip(wireType); }
+        eq(f, { k: "abc", p: 22, b: true }, "round-trip");
+      }
+
+      group("gRPC framing");
+      {
+        const body = new Writer().string(1, "hello").finish();
+        const frame = encodeMessage(body);
+        eq([frame[0], frame[4]], [0, body.length], "frame flag + length");
+        const { messages, consumed } = decodeMessages(frame);
+        eq([messages.length, hex(messages[0]), consumed], [1, hex(body), frame.length], "decode round-trip");
+      }
+
+      group("HTTP/2 framing");
+      {
+        const reader = new FrameReader();
+        const stream = new Uint8Array([
+          ...encodeSettings([[0x3, 100]]),
+          ...encodeHeaders(1, new Uint8Array([0x82, 0x86]), { endHeaders: true }),
+          ...encodeData(1, new Uint8Array([0xde, 0xad, 0xbe, 0xef]), { endStream: true }),
+        ]);
+        const frames = [...reader.push(stream.subarray(0, 12)), ...reader.push(stream.subarray(12))];
+        eq(frames.length, 3, "3 frames from split stream");
+        eq([frames[1].type, frames[1].streamId, hex(frames[1].payload)], [FRAME.HEADERS, 1, "8286"], "HEADERS frame");
+        eq([frames[2].type, (frames[2].flags & FLAG.END_STREAM) !== 0, hex(frames[2].payload)], [FRAME.DATA, true, "deadbeef"], "DATA + END_STREAM");
+      }
+
+      group("HPACK (RFC 7541 Appendix C)");
+      eq(_internal.encodeInteger(1337, 5, 0), [0x1f, 0x9a, 0x0a], "integer 1337 / 5-bit");
+      eq(new TextDecoder().decode(_internal.huffmanDecode(bytes("f1e3c2e5f23a6ba0ab90f4ff"))), "www.example.com", "Huffman decode");
+      eq(hex(_internal.huffmanEncode(new TextEncoder().encode("www.example.com"))), "f1e3c2e5f23a6ba0ab90f4ff", "Huffman encode");
+      eq(new Decoder().decode(bytes("828684418cf1e3c2e5f23a6ba0ab90f4ff")),
+        [[":method", "GET"], [":scheme", "http"], [":path", "/"], [":authority", "www.example.com"]], "decode C.4.1 request (Huffman)");
+      eq(new Decoder(256).decode(bytes("488264025885aec3771a4b6196d07abe941054d444a8200595040b8166e082a62d1bff6e919d29ad171863c78f0b97c8e9ae82ae43d3")),
+        [[":status", "302"], ["cache-control", "private"], ["date", "Mon, 21 Oct 2013 20:13:21 GMT"], ["location", "https://www.example.com"]], "decode C.6.1 response (Huffman + dyn table)");
+      {
+        const req = [[":method", "POST"], [":scheme", "http"], [":path", "/codespaces.grpc.CodespaceHost/StartSshServer"], [":authority", "codespace-internal"], ["content-type", "application/grpc"], ["te", "trailers"]];
+        eq(new Decoder().decode(encodeHeaderBlock(req)), req, "request header encode→decode round-trip");
+      }
+    } catch (e) {
+      fail++;
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td class="status fail">ERR</td><td>exception</td><td class="detail">${(e && e.stack) || e}</td>`;
+      rows.appendChild(tr);
+    }
+
+    summary.textContent = `${pass} passed, ${fail} failed`;
+    summary.className = fail ? "bad" : "ok";
+  </script>
+</body>
+</html>
