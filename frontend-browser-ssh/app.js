@@ -567,15 +567,25 @@ async function launch() {
   ensureTerminal();
   try {
     setStatus("looking for an existing codespace …", true);
+    const createCs = () => gh(`/repos/${owner}/${repo}/codespaces`, {
+      method: "POST",
+      body: JSON.stringify({ ref: cfg.ref || "main", idle_timeout_minutes: cfg.idleTimeoutMinutes || 30 }),
+    });
     const { codespaces = [] } = await gh(`/repos/${owner}/${repo}/codespaces`);
-    let cs = codespaces.find((c) => c.state !== "Deleted" && c.state !== "Failed");
-    if (cs && (cs.state === "Shutdown" || cs.state === "Archived")) {
-      cs = await gh(`/user/codespaces/${encodeURIComponent(cs.name)}/start`, { method: "POST" });
-    } else if (!cs) {
-      cs = await gh(`/repos/${owner}/${repo}/codespaces`, {
-        method: "POST",
-        body: JSON.stringify({ ref: cfg.ref || "main", idle_timeout_minutes: cfg.idleTimeoutMinutes || 30 }),
-      });
+    let cs = codespaces.find((c) => c.state === "Available")
+          || codespaces.find((c) => c.state !== "Deleted" && c.state !== "Failed");
+    if (!cs) {
+      cs = await createCs();
+    } else if (cs.state !== "Available") {
+      // Stopped codespace: try to start it, but fine-grained PATs often can't
+      // (/start → 403 "Resource not accessible by personal access token"), so
+      // fall back to creating a fresh one.
+      try {
+        cs = await gh(`/user/codespaces/${encodeURIComponent(cs.name)}/start`, { method: "POST" });
+      } catch (e) {
+        log(`could not start existing codespace (${e.message}); creating a new one`);
+        cs = await createCs();
+      }
     }
     state.codespaceName = cs.name;
     cs = await pollUntilAvailable(cs.name);
