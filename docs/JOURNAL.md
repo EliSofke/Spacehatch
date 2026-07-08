@@ -598,3 +598,22 @@ onWrite appends RFC 4254 §6.2 payload (TERM, cols, rows, wpx=0, hpx=0, modes=
 TTY_OP_END) — like CommandRequestMessage does for exec. Then shell. Harness
 test/e2e-launch.mjs types PROBE_CMD via the xterm textarea (real path) and
 falls back to __shellSend, checking window.__shellOut for a marker.
+
+## ✅ COMPLETE — fully stable interactive browser terminal (autonomously verified)
+Set up headless E2E (Playwright + Chromium in the container; WS egress works incl.
+the real relay bridge). Drove the DEPLOYED page with a Codespaces token end-to-end.
+Findings + fixes this session:
+- Fine-grained PATs can list/get/create/delete codespaces but NOT POST
+  /user/codespaces/{name}/start (403). Launch now prefers an Available codespace
+  and falls back to CREATE when start 403s.
+- Proper pty-req (subclass ChannelRequestMessage, RFC 4254 §6.2 payload) → sshd
+  allocates a real pty (colored prompt, line editing). Bare pty-req had dropped sshd.
+- Removed a DUPLICATE onDataReceived/onData wiring block that doubled every
+  keystroke and output char ("eecchhoo"). Single wiring now.
+- Added window-change (resize) so the pty tracks xterm size.
+Result (build cfe3ddc), reproducible across runs A/B/C + final:
+  StartRemoteServer OK → pty-req true → shell true → shell bound;
+  READ ok, keyboard write ok, char-doubling FALSE, STABLE after 45s (DO relay holds).
+  ★★ FULLY STABLE INTERACTIVE TERMINAL (read+write).
+Test harness: test/e2e-launch.mjs (CODESPACES_TOKEN=… node test/e2e-launch.mjs).
+Cleaned up all test codespaces afterward.
