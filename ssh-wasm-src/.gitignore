@@ -1,0 +1,2 @@
+# Go build artifacts (the wasm module is CI-built)
+*.wasm

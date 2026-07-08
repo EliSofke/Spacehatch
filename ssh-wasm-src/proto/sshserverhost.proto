@@ -1,0 +1,16 @@
+syntax = "proto3";
+package Codespaces.Grpc.SshServerHostService.v1;
+option go_package = "spacehatch/ssh-wasm/gen/sshserverhost";
+
+// Reverse-engineered from cli/cli internal/codespaces/rpc/ssh (the exact
+// contract gh uses to ask the codespace agent to start its SSH server).
+service SshServerHost {
+  rpc StartRemoteServerAsync(StartRemoteServerRequest) returns (StartRemoteServerResponse);
+}
+message StartRemoteServerRequest  { string UserPublicKey = 1; }
+message StartRemoteServerResponse {
+  bool   Result     = 1;
+  string ServerPort = 2;
+  string User       = 3;
+  string Message    = 4;
+}
