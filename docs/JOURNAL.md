@@ -296,3 +296,32 @@ Make D robust to the relay 1006 by proxying the relay WS through the worker:
   rewritten relay URI) to connect().
 - Tests: 9/9 + 4 new /relay early-return checks pass. Full path needs a live
   browser + codespace to validate; then finalize bindShell.
+
+## MILESTONE — transport fully works (route B proven)
+Live log with the worker WS proxy: relayUri now points at the worker; the
+relay connects ("Connected with subprotocol 'tunnel-relay-client'") — the 1006
+is GONE. Full SSH handshake to the dev-tunnels HOST succeeds (ecdh-sha2-nistp384,
+server public key verified, client authenticated), client.connect() RESOLVED,
+and the host forwards its ports (3000, 7681, 16634, 16635). The server-side
+proxy solved the browser handshake rejection. bindShell still throws (by design);
+the session then idles and cleanly reconnects.
+
+## bindShell scope — confirmed from cli/cli ssh.go (the last piece)
+The connected session is the dev-tunnels HOST (port-forward multiplexer,
+Username: tunnel), NOT a login shell. gh's shell flow to replicate in-browser:
+1. generate an SSH keypair (public+private).
+2. over the tunnel/forwarder, rpc.CreateInvoker → JSON-RPC (vscode-jsonrpc) to
+   the codespace agent (internal control port, likely ~16634).
+3. invoker.StartSSHServerWithOptions({UserPublicKeyFile}) → returns
+   (remoteSSHServerPort, sshUser); this registers our public key + starts sshd.
+4. forward remoteSSHServerPort (internal) and open a stream to it via the
+   tunnel client.
+5. run a SECOND SshClientSession over that stream, auth as sshUser with the
+   private key.
+6. open a session channel, request pty + shell, wire to xterm.
+This is essentially reimplementing gh's codespace SSH client in the browser
+(RPC invoker + key gen/registration + second SSH + shell/pty). Large and only
+verifiable in a live browser+codespace. Ports 16634/16635 in the forward list
+are likely the internal control/RPC ports.
+Pragmatic alternative for bridge-carrying repos: connectToForwardedPort(7681)
+→ our in-codespace xterm bridge (working terminal now, but not bare-repo).
