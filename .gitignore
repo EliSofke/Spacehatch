@@ -15,3 +15,7 @@ backend/dist/
 
 # Auth worker (no deps, but ignore if installed locally)
 auth-worker/node_modules/
+
+# Browser-SSH spike: SDKs loaded from esm.sh at runtime
+frontend-browser-ssh/vendor/
+frontend-browser-ssh/bundle-src/

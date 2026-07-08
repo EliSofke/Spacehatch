@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Spacehatch — browser SSH (PAT or OAuth)</title>
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --chassis:#10151a; --panel:#161d24; --seam:#26303a; --ink:#dfe6ea;
+      --dim:#7d8b96; --phosphor:#f2a33c; --screen:#0a0e12;
+      --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+      --sans:system-ui,-apple-system,"Segoe UI",sans-serif;
+    }
+    *{box-sizing:border-box;} html,body{margin:0;}
+    body{background:var(--chassis);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.55;min-height:100vh;display:flex;flex-direction:column;}
+    .wrap{width:min(960px,calc(100% - 3rem));margin:0 auto;}
+    header.site{border-bottom:1px solid var(--seam);padding:.9rem 0;}
+    header.site .wrap{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;}
+    .brand{font-family:var(--mono);font-weight:600;}
+    .brand .cursor{display:inline-block;width:.55em;height:1em;background:var(--phosphor);vertical-align:text-bottom;margin-left:2px;animation:blink 1.1s steps(1) infinite;}
+    @keyframes blink{50%{opacity:0;}}
+    @media (prefers-reduced-motion:reduce){.brand .cursor{animation:none;}}
+    #whoami{font-family:var(--mono);font-size:.8rem;color:var(--dim);}
+    .hero{padding:2.4rem 0 .6rem;}
+    h1{font-family:var(--mono);font-weight:500;font-size:clamp(1.4rem,3vw,2rem);margin:0 0 .7rem;}
+    h1 .amp{color:var(--phosphor);}
+    .hero p{color:var(--dim);max-width:64ch;margin:0;}
+    code{font-family:var(--mono);font-size:.9em;background:var(--panel);border:1px solid var(--seam);border-radius:4px;padding:.05em .4em;}
+    .card{background:var(--panel);border:1px solid var(--seam);border-radius:10px;padding:1.1rem 1.2rem;margin:1.2rem 0;}
+    .step{font-family:var(--mono);font-size:.78rem;color:var(--phosphor);letter-spacing:.08em;text-transform:uppercase;margin:0 0 .6rem;}
+    label{display:block;font-size:.82rem;color:var(--dim);margin-bottom:.3rem;}
+    input[type=password],input[type=text]{width:100%;font-family:var(--mono);font-size:.9rem;background:var(--chassis);color:var(--ink);border:1px solid var(--seam);border-radius:6px;padding:.55rem .75rem;}
+    input:focus-visible{outline:2px solid var(--phosphor);outline-offset:1px;}
+    .row{display:flex;align-items:center;gap:.8rem;flex-wrap:wrap;}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:.8rem;}
+    @media (max-width:560px){.grid2{grid-template-columns:1fr;}}
+    .tabs{display:flex;gap:.4rem;margin-bottom:.9rem;}
+    .tab{font-family:var(--mono);font-size:.82rem;padding:.4rem .9rem;border:1px solid var(--seam);border-radius:6px;background:transparent;color:var(--dim);cursor:pointer;}
+    .tab[aria-selected=true]{color:#14100a;background:var(--phosphor);border-color:var(--phosphor);}
+    button,a.button{font-family:var(--mono);font-size:.92rem;font-weight:600;text-decoration:none;border-radius:6px;padding:.6rem 1.3rem;cursor:pointer;display:inline-block;border:1px solid var(--seam);background:var(--panel);color:var(--ink);}
+    button:hover{border-color:var(--dim);}
+    button:focus-visible{outline:2px solid var(--phosphor);outline-offset:2px;}
+    button:disabled{opacity:.45;cursor:default;}
+    .primary{background:var(--phosphor);border-color:var(--phosphor);color:#14100a;}
+    .hidden{display:none!important;}
+    #status{font-family:var(--mono);font-size:.85rem;color:var(--dim);min-height:1.4em;margin-top:.7rem;}
+    #status.live{color:var(--phosphor);}
+    .hint{font-size:.78rem;color:var(--dim);margin-top:.5rem;}
+    .bezel{margin:1.4rem 0 2.4rem;background:var(--panel);border:1px solid var(--seam);border-radius:10px;overflow:hidden;}
+    .bezel-bar{display:flex;align-items:center;gap:.7rem;padding:.5rem .9rem;border-bottom:1px solid var(--seam);font-family:var(--mono);font-size:.78rem;color:var(--dim);}
+    .led{width:8px;height:8px;border-radius:50%;background:var(--seam);}
+    .led.on{background:var(--phosphor);box-shadow:0 0 6px var(--phosphor);}
+    #terminal{height:440px;background:var(--screen);padding:8px 4px 8px 10px;}
+    #terminal .xterm{height:100%;}
+    footer.site{margin-top:auto;border-top:1px solid var(--seam);padding:1rem 0 1.4rem;color:var(--dim);font-size:.8rem;font-family:var(--mono);}
+  </style>
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <span class="brand">spacehatch/browser-ssh<span class="cursor" aria-hidden="true"></span></span>
+      <span id="whoami"></span>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="hero">
+      <h1>Terminal in the browser — <span class="amp">no server shell</span>.</h1>
+      <p>
+        This page speaks SSH to the Codespace directly from your browser over the
+        Dev Tunnels relay (Microsoft's browser SDK), so there is no Node/<code>gh</code>
+        bridge. Choose how to authenticate: a personal access token, or a GitHub
+        sign-in via the stateless exchange function.
+      </p>
+    </section>
+
+    <section class="card">
+      <p class="step">Step 1 · Authenticate</p>
+      <div class="tabs" role="tablist">
+        <button class="tab" id="tab-pat" role="tab" aria-selected="true">Personal access token</button>
+        <button class="tab" id="tab-oauth" role="tab" aria-selected="false">Sign in with GitHub</button>
+      </div>
+
+      <div id="pane-pat">
+        <label for="token">GitHub token (Codespaces: read and write)</label>
+        <input type="password" id="token" autocomplete="off" spellcheck="false" placeholder="ghp_… or github_pat_…" />
+        <p class="hint">Kept in this tab's memory only — sent only to <code>api.github.com</code> and the tunnel relay.</p>
+      </div>
+
+      <div id="pane-oauth" class="hidden">
+        <div class="row">
+          <button id="btn-login" class="primary">Sign in with GitHub</button>
+          <button id="btn-logout" class="hidden">Sign out</button>
+        </div>
+        <p class="hint">OAuth authorization-code flow with PKCE. Requires the deployed <code>auth-worker</code> (set <code>clientId</code> and <code>authWorkerUrl</code> below).</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <p class="step">Step 2 · Target &amp; launch</p>
+      <div class="grid2">
+        <div><label for="owner">Owner</label><input type="text" id="owner" spellcheck="false" /></div>
+        <div><label for="repo">Repository</label><input type="text" id="repo" spellcheck="false" /></div>
+      </div>
+      <div class="row" style="margin-top:.9rem;">
+        <button id="btn-launch" class="primary" disabled>Launch cloud terminal</button>
+        <button id="btn-stop" class="hidden">Stop</button>
+      </div>
+      <p id="status" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="bezel" aria-label="Terminal">
+      <div class="bezel-bar"><span class="led" id="led"></span><span id="bezel-title">disconnected</span></div>
+      <div id="terminal"></div>
+    </section>
+  </main>
+
+  <footer class="site">
+    <div class="wrap">transport: browser → api.github.com + Dev Tunnels relay (WSS) · SSH via @microsoft/dev-tunnels-ssh · token in tab memory</div>
+  </footer>
+
+  <script>
+    // Configuration. URL params ?owner=&repo= override the defaults.
+    window.SPACEHATCH_D_CONFIG = {
+      // OAuth (only needed for the "Sign in with GitHub" option):
+      clientId: "YOUR_OAUTH_APP_CLIENT_ID",
+      authWorkerUrl: "https://spacehatch-auth.YOUR-SUBDOMAIN.workers.dev",
+      // Defaults for the target repository:
+      owner: "EliSofke",
+      repo: "Spacehatch",
+      ref: "main",
+      idleTimeoutMinutes: 30,
+      // Pinned Dev Tunnels SDK version served as browser ESM:
+      sdkVersion: "1.1.13",
+    };
+  </script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

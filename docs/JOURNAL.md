@@ -154,3 +154,17 @@ management GET that resolves clientRelayUri. The WSS relay handshake itself
 has no CORS preflight; its server-side Origin policy is the one remaining
 unknown, to be settled by a live SDK spike (@microsoft/dev-tunnels-ssh +
 -connections + xterm.js).
+
+## spike — Variant D browser-SSH (static page, PAT + OAuth)
+- Built frontend-browser-ssh/: static page with a PAT/OAuth toggle, codespace
+  lifecycle, tunnelProperties fetch, and the Dev Tunnels SDK loaded as browser
+  ESM from esm.sh (local esbuild bundle abandoned: node builtins like stream
+  break class inheritance with empty shims; CDN ESM is the right fit for a
+  static page).
+- Verified live (read-only): dual auth yields a token; REST lifecycle works;
+  ?internal=true exposes tunnelProperties with ACAO:* (browser fetch, no proxy).
+- Live-validation boundary isolated in connectTerminal()/bindShell(): the
+  forwarded-SSH-shell accessor + SSH client-auth (browser-generated key via the
+  codespace SSH-key header) confirmed only in a real browser + running codespace.
+  bindShell() throws deliberately until then. No release tag (terminal stage
+  unvalidated).
