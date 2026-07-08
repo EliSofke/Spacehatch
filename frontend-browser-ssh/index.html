@@ -120,6 +120,14 @@
       <div class="bezel-bar"><span class="led" id="led"></span><span id="bezel-title">disconnected</span></div>
       <div id="terminal"></div>
     </section>
+
+    <section class="card">
+      <div class="row" style="justify-content:space-between;align-items:baseline;">
+        <p class="step" style="margin:0;">Diagnostics</p>
+        <button id="btn-copylog" style="padding:.35rem .8rem;font-size:.78rem;font-weight:500;">Copy log</button>
+      </div>
+      <pre id="log" style="margin:.7rem 0 0;max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-family:var(--mono);font-size:.76rem;color:var(--dim);background:var(--screen);border:1px solid var(--seam);border-radius:6px;padding:.7rem .8rem;"></pre>
+    </section>
   </main>
 
   <footer class="site">

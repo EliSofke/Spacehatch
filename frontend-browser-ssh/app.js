@@ -51,7 +51,34 @@ const state = {
 function setStatus(t, live = false) {
   els.status.textContent = t;
   els.status.classList.toggle("live", live);
+  log(t);
 }
+
+// ---- On-page diagnostics: every step is visible without devtools ----------
+function log(msg, level = "info") {
+  const ts = new Date().toISOString().slice(11, 23);
+  const line = `[${ts}] ${level.toUpperCase()}  ${msg}`;
+  const el = document.getElementById("log");
+  if (el) {
+    el.textContent += line + "\n";
+    el.scrollTop = el.scrollHeight;
+  }
+  (level === "error" ? console.error : console.log)(line);
+}
+window.addEventListener("error", (e) =>
+  log(`window.onerror: ${e.message} @ ${e.filename}:${e.lineno}:${e.colno}`, "error"),
+);
+window.addEventListener("unhandledrejection", (e) => {
+  const r = e.reason;
+  log(`unhandledrejection: ${(r && (r.stack || r.message)) || r}`, "error");
+});
+document.addEventListener("DOMContentLoaded", () => {
+  const b = document.getElementById("btn-copylog");
+  if (b) b.addEventListener("click", () => {
+    const t = document.getElementById("log");
+    if (t) navigator.clipboard?.writeText(t.textContent).then(() => log("(log copied to clipboard)"));
+  });
+});
 function setConnected(on, title) {
   els.led.classList.toggle("on", on);
   els.bezelTitle.textContent = title;
@@ -212,9 +239,11 @@ async function loadSdk() {
 async function connectTerminal(name, term) {
   setStatus("fetching tunnel credentials …", true);
   const tp = await fetchTunnelProperties(name);
+  log(`tunnelProperties ok: cluster=${tp.clusterId} id=${tp.tunnelId} domain=${tp.domain} (token len=${(tp.connectAccessToken||"").length})`);
 
   setStatus("loading Dev Tunnels SDK …", true);
   const { connections } = await loadSdk();
+  log(`SDK loaded: TunnelRelayTunnelClient=${typeof connections.TunnelRelayTunnelClient}`);
 
   // Build the minimal Tunnel object the client needs from tunnelProperties.
   const tunnel = {
@@ -231,12 +260,21 @@ async function connectTerminal(name, term) {
   const client = new Client();
   state.client = client;
 
-  // Surface relay/report diagnostics into the terminal for the spike.
+  // Surface relay/report diagnostics into the terminal AND the on-page log.
   if (client.trace) {
-    client.trace = (level, _id, msg) => term.write(`\r\n\x1b[2m[relay:${level}] ${msg}\x1b[0m`);
+    client.trace = (level, _id, msg) => {
+      term.write(`\r\n\x1b[2m[relay:${level}] ${msg}\x1b[0m`);
+      log(`relay:${level} ${msg}`);
+    };
   }
 
-  await client.connect(tunnel);
+  try {
+    await client.connect(tunnel);
+    log("client.connect() resolved — relay handshake succeeded");
+  } catch (err) {
+    log(`client.connect() FAILED: ${err && (err.stack || err.message || err)}`, "error");
+    throw err;
+  }
 
   // Open the codespace's SSH channel over the tunnel and bind it to xterm.
   // The SDK forwards the codespace SSH port; the exact accessor for the
@@ -311,6 +349,7 @@ async function launch() {
     await connectTerminal(cs.name, term);
   } catch (err) {
     setStatus(`Launch failed: ${err.message}`);
+    log(`launch error: ${err && (err.stack || err.message || err)}`, "error");
     term && term.write(`\r\n\x1b[31m[spacehatch] ${err.message}\x1b[0m\r\n`);
   } finally {
     els.launch.disabled = false;
