@@ -271,3 +271,17 @@ from the codespaces list with that editor preference) rather than standing
 alone, and the page has no programmatic control — state, stop and delete are
 handled on github.com/codespaces. That is exactly the deal: GitHub's
 infrastructure does everything, our page only aims the click.
+
+### Variant E+B hybrid — tokenless bare terminal
+
+The lite page also carries a second step that closes the trilemma differently:
+**tokenless + own terminal**, at the price of repo-agnosticism. Step 1 launches
+via the session-authenticated quickstart URL; step 2 opens
+`https://<codespace>-7681.app.github.dev/` — the Spacehatch in-codespace bridge
+on a **private** forwarded port, guarded by the same GitHub session cookie
+(verified in the Variant B work). No PAT, no OAuth, no worker: the only
+requirement is that the **target repository carries the `.devcontainer/`
+bridge** (see [Required repository artifacts](#required-repository-artifacts)).
+The page can't query the codespace name without a token, so the user copies it
+once from github.com/codespaces; the page remembers it (localStorage, name
+only — not a credential) and the terminal URL is bookmarkable.

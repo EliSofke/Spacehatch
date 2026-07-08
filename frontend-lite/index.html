@@ -50,16 +50,17 @@
 
   <main class="wrap">
     <section class="hero">
-      <h1>One click. <span class="amp">No token, no sign-in flow.</span></h1>
+      <h1>One click. <span class="amp">No token — and no VS Code.</span></h1>
       <p>
-        This launcher rides your existing GitHub session — the same mechanism
-        VS Code Web uses. It resumes your most recent codespace for the
-        repository, or creates one, entirely on GitHub's side. Nothing to
-        configure, nothing to paste, works on any bare repository.
+        Both steps ride your existing GitHub session, the same mechanism VS Code
+        Web uses: step 1 resumes or creates the codespace on GitHub's side,
+        step 2 opens Spacehatch's own bare terminal on a privately forwarded
+        port. Nothing to paste, nothing to configure, no third party involved.
       </p>
     </section>
 
     <section class="card">
+      <p style="font-family:var(--mono);font-size:.78rem;color:var(--phosphor);letter-spacing:.08em;text-transform:uppercase;margin:0 0 .6rem;">Step 1 · Launch</p>
       <div class="grid2">
         <div><label for="owner">Owner</label><input type="text" id="owner" spellcheck="false" placeholder="octo-org" /></div>
         <div><label for="repo">Repository</label><input type="text" id="repo" spellcheck="false" placeholder="octo-repo" /></div>
@@ -69,35 +70,56 @@
         <a class="button" href="https://github.com/codespaces" target="_blank" rel="noopener">Manage codespaces ↗</a>
       </div>
       <p class="hint">
-        Opens the codespace in VS Code Web — the terminal is one
-        <kbd>Ctrl</kbd>+<kbd>`</kbd> away (or Menu → Terminal → New Terminal).
-        Quickstart links always open in the web client. If your account's
-        editor preference is JupyterLab, opening a codespace from
-        <a href="https://github.com/codespaces" target="_blank" rel="noopener">your codespaces list</a>
-        lands in JupyterLab's terminal instead.
+        Opens the codespace via GitHub's quickstart page (resume-or-create),
+        authenticated by your session. The VS Code Web tab it opens can be
+        closed once the codespace is running — step 2 gives you the bare terminal.
+      </p>
+    </section>
+
+    <section class="card">
+      <p style="font-family:var(--mono);font-size:.78rem;color:var(--phosphor);letter-spacing:.08em;text-transform:uppercase;margin:0 0 .6rem;">Step 2 · Bare terminal (no VS Code)</p>
+      <label for="csname">Codespace name</label>
+      <input type="text" id="csname" spellcheck="false" placeholder="e.g. obscure-winner-gx4q677rwqg5hv47g" />
+      <div class="row">
+        <button id="btn-terminal" class="primary">Open terminal ↗</button>
+      </div>
+      <p class="hint">
+        Opens <code>https://&lt;name&gt;-7681.app.github.dev/</code> — our in-codespace
+        xterm.js bridge on a privately forwarded port, guarded by the same GitHub
+        session (no token). Requires the target repository to carry the
+        Spacehatch <code>.devcontainer/</code> bridge. Find the name on
+        <a href="https://github.com/codespaces" target="_blank" rel="noopener">github.com/codespaces</a>
+        (shown under the repo) — this page remembers it for next time, and the
+        terminal URL itself is bookmarkable.
       </p>
     </section>
   </main>
 
   <footer class="site">
-    <div class="wrap">auth: your github.com session · launch: codespaces.new quickstart · zero infrastructure, zero tokens</div>
+    <div class="wrap">auth: your github.com session for both steps · launch: codespaces.new quickstart · terminal: private-port bridge · zero tokens, zero third parties</div>
   </footer>
 
   <script>
     "use strict";
-    // Tokenless by design: no fetch, no storage, no third-party calls.
-    // The button performs a top-level navigation to GitHub's documented
-    // quickstart URL; GitHub's session handles auth and resume-or-create.
+    // Tokenless by design: no fetch, no third-party calls. Top-level
+    // navigations only; GitHub's session authenticates both the quickstart
+    // page (step 1) and the private forwarded port (step 2).
+    // localStorage holds ONLY the last codespace name — a non-secret label.
     const params = new URLSearchParams(location.search);
     const ownerEl = document.getElementById("owner");
     const repoEl = document.getElementById("repo");
+    const csEl = document.getElementById("csname");
     ownerEl.value = params.get("owner") || "EliSofke";
     repoEl.value = params.get("repo") || "Spacehatch";
+    csEl.value = params.get("codespace") || localStorage.getItem("spacehatch_last_codespace") || "";
+    const PORT = Number(params.get("port") || 7681);
+    const DOMAIN = params.get("domain") || "app.github.dev";
+    const NAME_RE = /^[A-Za-z0-9._-]+$/;
 
     function launch() {
       const owner = ownerEl.value.trim();
       const repo = repoEl.value.trim();
-      if (!owner || !repo || !/^[A-Za-z0-9._-]+$/.test(owner) || !/^[A-Za-z0-9._-]+$/.test(repo)) {
+      if (!owner || !repo || !NAME_RE.test(owner) || !NAME_RE.test(repo)) {
         ownerEl.focus();
         return;
       }
@@ -107,10 +129,25 @@
         `?quickstart=1${ref ? `&ref=${encodeURIComponent(ref)}` : ""}`;
       window.location.href = url; // top-level: GitHub session cookies apply
     }
+
+    function openTerminal() {
+      const name = csEl.value.trim();
+      if (!name || !/^[a-z0-9-]{3,80}$/.test(name)) {
+        csEl.focus();
+        return;
+      }
+      localStorage.setItem("spacehatch_last_codespace", name);
+      // Private forwarded port: GitHub's cookie auth wall guards this URL —
+      // first visit may bounce through a github.com sign-in redirect once.
+      window.open(`https://${name}-${PORT}.${DOMAIN}/`, "_blank", "noopener");
+    }
+
     document.getElementById("btn-launch").addEventListener("click", launch);
+    document.getElementById("btn-terminal").addEventListener("click", openTerminal);
     for (const el of [ownerEl, repoEl]) {
       el.addEventListener("keydown", (e) => { if (e.key === "Enter") launch(); });
     }
+    csEl.addEventListener("keydown", (e) => { if (e.key === "Enter") openTerminal(); });
   </script>
 </body>
 </html>

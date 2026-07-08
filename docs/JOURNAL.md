@@ -196,3 +196,16 @@ unknown, to be settled by a live SDK spike (@microsoft/dev-tunnels-ssh +
 - Positioning: E = zero infrastructure + GitHub UI shell around the terminal;
   D = bare terminal, one relay function, SSH binding still to validate;
   JupyterLab = terminal-first via account editor preference.
+
+## v0.6.0 — E+B hybrid: tokenless bare terminal
+- Trilemma made explicit: tokenless / own terminal / bare repo — pick two.
+  E picks tokenless+bare-repo; the hybrid picks tokenless+own-terminal by
+  reusing two verified facts: quickstart URLs are session-authenticated, and
+  private forwarded ports are session-authenticated (Variant B auth wall).
+- frontend-lite now has Step 2: opens https://<name>-7681.app.github.dev/
+  (the in-codespace xterm bridge). No fetch anywhere on the page; only
+  top-level navigations. localStorage stores solely the last codespace name
+  (non-secret); name also settable via ?codespace=, port/domain via ?port=
+  &domain= (GitHub reserves the right to change the domain).
+- Constraint documented: target repo must carry the .devcontainer bridge;
+  lifecycle (stop/delete) stays on github.com/codespaces.
