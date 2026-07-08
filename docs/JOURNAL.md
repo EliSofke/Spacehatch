@@ -281,3 +281,18 @@ a local (file://, Origin: null) handshake test, or make D robust by proxying the
 relay WebSocket THROUGH the worker (server-side connect: no browser origin, can
 set the auth header; SSH stays end-to-end encrypted so the worker sees only
 ciphertext).
+
+## v0.8.0 — Variant D: worker WebSocket relay-proxy (route B)
+Make D robust to the relay 1006 by proxying the relay WS through the worker:
+- worker /tunnel now rewrites endpoints[0].clientRelayUri to
+  wss://<worker>/relay/<cluster>/<tunnelId>.
+- new /relay/<cluster>/<tunnelId> route: validates origin, extracts the tunnel
+  connect token from the client's offered subprotocols, opens the real relay WS
+  SERVER-SIDE (Authorization header, no browser origin, known-good native path),
+  and bridges bytes both ways with sanitized close codes. Echoes the upstream
+  negotiated subprotocol back to the browser.
+- SSH stays end-to-end (browser<->codespace); the worker sees only ciphertext.
+- Frontend unchanged: it already passes the fetched tunnel (now with the
+  rewritten relay URI) to connect().
+- Tests: 9/9 + 4 new /relay early-return checks pass. Full path needs a live
+  browser + codespace to validate; then finalize bindShell.
