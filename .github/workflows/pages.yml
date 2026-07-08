@@ -23,6 +23,12 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - name: Stamp build version into app.js
+        run: |
+          STAMP="${GITHUB_SHA:0:7} $(date -u +%Y-%m-%dT%H:%MZ)"
+          sed -i "s|__BUILD_SHA__|${STAMP}|g" frontend-browser-ssh/app.js
+          echo "stamped build: ${STAMP}"
+          grep -n 'const BUILD' frontend-browser-ssh/app.js
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

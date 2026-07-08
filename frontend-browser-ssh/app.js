@@ -55,6 +55,10 @@ function setStatus(t, live = false) {
   log(t);
 }
 
+// Build stamp — replaced with the short commit SHA + date at Pages deploy time
+// (see .github/workflows/pages.yml). Shows as "__BUILD_SHA__" when unstamped.
+const BUILD = "__BUILD_SHA__";
+
 // ---- On-page diagnostics: every step is visible without devtools ----------
 function log(msg, level = "info") {
   const ts = new Date().toISOString().slice(11, 23);
@@ -74,6 +78,7 @@ window.addEventListener("unhandledrejection", (e) => {
   log(`unhandledrejection: ${(r && (r.stack || r.message)) || r}`, "error");
 });
 document.addEventListener("DOMContentLoaded", () => {
+  log(`spacehatch build ${BUILD}`);
   const b = document.getElementById("btn-copylog");
   if (b) b.addEventListener("click", () => {
     const t = document.getElementById("log");
