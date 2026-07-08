@@ -439,11 +439,11 @@ async function bindShell(client, term, ssh, tp) {
   // tunnel (management API via worker), like gh's ForwardPort, then refresh.
   if (tp && tp.managePortsAccessToken) {
     try {
-      const res = await fetch(`${WORKER_URL}/port`, {
+      const res = await withTimeout(fetch(`${WORKER_URL}/port`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cluster: tp.clusterId, tunnelId: tp.tunnelId, port, token: tp.managePortsAccessToken }),
-      });
+      }), 12000, "createTunnelPort fetch");
       const j = await res.json().catch(() => ({}));
       log(`createTunnelPort(${port}) → worker ${res.status}, api ${j.status}${j.body ? " " + String(j.body).slice(0, 140) : ""}`);
     } catch (e) {
@@ -474,14 +474,18 @@ async function bindShell(client, term, ssh, tp) {
   if (typeof session.onAuthenticating === "function") {
     session.onAuthenticating((e) => { try { e.authenticationPromise = Promise.resolve({}); } catch { /* */ } });
   }
+  setStatus("SSH: connecting transport …", true);
   log("second SSH: connecting transport …");
-  await session.connect(stream);
+  await withTimeout(session.connect(stream), 20000, "session.connect");
+  setStatus("SSH: authenticating …", true);
   log("second SSH: authenticating as " + user + " …");
-  const authed = await session.authenticate({ username: user, publicKeys: [keyPair] });
+  const authed = await withTimeout(session.authenticate({ username: user, publicKeys: [keyPair] }), 20000, "session.authenticate");
   log(`second SSH authenticate → ${authed}`, authed ? "ok" : "error");
   if (!authed) throw new Error("second SSH authentication failed");
 
-  const channel = await session.openChannel();
+  setStatus("SSH: opening shell …", true);
+  log("second SSH: opening channel …");
+  const channel = await withTimeout(session.openChannel(), 12000, "openChannel");
   log(`shell channel opened (${streamAPI(channel)})`);
   const cols = term.cols || 80, rows = term.rows || 24;
   // pty-req (best-effort) then shell, via ChannelRequestMessage.
@@ -490,12 +494,12 @@ async function bindShell(client, term, ssh, tp) {
     pty.requestType = "pty-req"; pty.wantReply = true;
     if ("terminalType" in pty) pty.terminalType = "xterm-256color";
     if ("columns" in pty) { pty.columns = cols; pty.rows = rows; }
-    const pok = await channel.request(pty);
+    const pok = await withTimeout(channel.request(pty), 10000, "pty-req");
     log(`pty-req → ${pok}`);
   } catch (e) { log(`pty-req not accepted (${e.message}) — continuing without pty`); }
   const shellReq = new ssh.ChannelRequestMessage();
   shellReq.requestType = "shell"; shellReq.wantReply = true;
-  const shellOk = await channel.request(shellReq);
+  const shellOk = await withTimeout(channel.request(shellReq), 10000, "shell");
   log(`shell → ${shellOk}`, shellOk ? "ok" : "error");
 
   // Wire the shell channel to xterm.
