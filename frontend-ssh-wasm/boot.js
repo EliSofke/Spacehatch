@@ -316,7 +316,7 @@ async function connect() {
     // status.hostConnectionCount (passed through by the worker) is the signal.
     setStatus("waiting for tunnel host …");
     stepStart("Attaching tunnel host");
-    let relayUri;
+    let workerRelayUri;
     for (let i = 0; ; i++) {
       const relayRes = await fetch(`${WORKER_URL}/tunnel`, {
         method: "POST",
@@ -325,22 +325,37 @@ async function connect() {
       });
       if (!relayRes.ok) throw new Error(`/tunnel ${relayRes.status} ${await relayRes.text()}`);
       const tunnel = await relayRes.json();
-      relayUri = tunnel.endpoints && tunnel.endpoints[0] && tunnel.endpoints[0].clientRelayUri;
-      if (!relayUri) throw new Error("no clientRelayUri from /tunnel");
+      workerRelayUri = tunnel.endpoints && tunnel.endpoints[0] && tunnel.endpoints[0].clientRelayUri;
+      if (!workerRelayUri) throw new Error("no clientRelayUri from /tunnel");
       const hostUp = ((tunnel.status && tunnel.status.hostConnectionCount) || 0) >= 1;
       if (hostUp || i >= 40) break;
       await new Promise((r) => setTimeout(r, 750));
     }
+    // The dev-tunnels relay accepts the connect token as a WebSocket subprotocol
+    // (confirmed: works for Client/Connect from a browser Origin), so the browser
+    // can reach the relay DIRECTLY — removing the worker (and its Durable Object)
+    // from the per-byte path. The worker stays only for the one-time management
+    // calls (/tunnel host-readiness polling above, /port registration in Go). The
+    // worker relay remains the fallback if the direct handshake is ever refused.
+    const directRelayUri =
+      `wss://${tp.clusterId}-data.rel.tunnels.api.visualstudio.com/api/v1/Client/Connect/${tp.tunnelId}`;
 
     stepStart("Loading Go/WASM transport");
     await loadGo();
 
     setStatus("connecting …");
     stepStart("Connecting to relay");
-    // Let the connection to the worker host settle before the WS upgrade (some
-    // browsers fail the first upgrade right after a same-host HTTPS request).
+    // Let the connection settle before the WS upgrade (some browsers fail the
+    // very first upgrade right after a same-host HTTPS request).
     await new Promise((r) => setTimeout(r, 350));
-    const ws = await openRelay(relayUri, tp.connectAccessToken);
+    // Prefer the direct relay path (no worker in the byte stream); fall back to
+    // the worker bridge if the direct handshake is refused.
+    let ws;
+    try {
+      ws = await openRelay(directRelayUri, tp.connectAccessToken, 3);
+    } catch (_) {
+      ws = await openRelay(workerRelayUri, tp.connectAccessToken);
+    }
 
     // ws is open — wire the Go transport; its status pings drive the next steps.
     const handle = window.spacehatchSSHConnect({
