@@ -11,6 +11,9 @@
 const cfg = window.SPACEHATCH_D_CONFIG || {};
 const WORKER_URL = (cfg.workerUrl || "").replace(/\/$/, "");
 
+const SPACEHATCH_VERSION = "0.1.0";
+const SPACEHATCH_COMMIT = "__COMMIT__"; // replaced with the short git SHA at deploy (pages.yml)
+
 const els = {
   token: /** @type {HTMLInputElement} */ (document.getElementById("token")),
   owner: /** @type {HTMLInputElement} */ (document.getElementById("owner")),
@@ -205,12 +208,13 @@ async function connect() {
   els.connect.disabled = true;
 
   ensureTerm();
-  // neofetch-style header: cyan logo on the left, three boot-time attributes.
-  const CY = "\x1b[36m", CB = "\x1b[1;36m", RS = "\x1b[0m";
-  const lbl = (s) => `${CB}${s.padEnd(11)}${RS}`;
-  term.writeln(`${CY}/------\\${RS}   ${lbl("Transport")}dev-tunnels · grpc-go · x/crypto/ssh`);
-  term.writeln(`${CY}[> SH <]${RS}   ${lbl("Target")}${owner}/${repo}`);
-  term.writeln(`${CY}\\------/${RS}   ${lbl("Engine")}Go → WASM`);
+  // neofetch-style header: cyan logo on the left, three attributes.
+  const CY = "\x1b[36m", CB = "\x1b[1;36m", D = "\x1b[90m", RS = "\x1b[0m";
+  const commit = SPACEHATCH_COMMIT.startsWith("__") ? "dev" : SPACEHATCH_COMMIT;
+  const lbl = (s) => `${CB}${s.padEnd(10)}${RS}`;
+  term.writeln(`${CY}/------\\${RS}   ${CB}SpaceHatch${RS} ${CY}v${SPACEHATCH_VERSION}${RS} ${D}(${commit})${RS}`);
+  term.writeln(`${CY}[> SH <]${RS}   ${lbl("Terminal")}Xterm.js`);
+  term.writeln(`${CY}\\------/${RS}   ${lbl("Target")}${owner}/${repo}`);
   term.writeln("");
 
   try {
