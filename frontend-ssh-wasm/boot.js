@@ -97,7 +97,7 @@ function ensureTerm() {
   bootT0 = performance.now();
   // eslint-disable-next-line no-undef
   term = new Terminal({
-    fontSize: 13,
+    fontSize: 15,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
     cursorBlink: true,
     theme: { background: "#0b0e14", foreground: "#d7dae0" },
