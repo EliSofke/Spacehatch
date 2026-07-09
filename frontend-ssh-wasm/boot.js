@@ -34,8 +34,70 @@ let term = null, fit = null, bootT0 = 0;
 // are held back. Cleared by the transport's onData.
 let enterGateUntil = 0;
 
+// --- Predictive local echo (step B) ------------------------------------------
+// Typing otherwise waits a full RTT for the server echo. We speculatively echo
+// printable keystrokes locally so typing feels instant, while the server stays
+// the source of truth: each prediction is confirmed by SUPPRESSING the matching
+// echo byte from the output stream. If the echo never comes (echo-off prompts
+// like passwords, or unexpected output), the shown prediction is erased and
+// prediction pauses. Safeguards: printable ASCII only; never in the alternate
+// screen (vim/htop/less); off on detected password prompts; any non-printable
+// key or a scan diverging from prediction resyncs to the server's truth.
+const predict = { on: false, alt: false, pending: [], pausedUntil: 0 };
+const asciiDecoder = new TextDecoder("latin1");
+const isPrintable = (c) => c >= 0x20 && c <= 0x7e;
+
+function predictClear(erase) {
+  if (erase && predict.pending.length && term) term.write("\b \b".repeat(predict.pending.length));
+  predict.pending.length = 0;
+}
+function predictReset() { predict.on = false; predict.alt = false; predict.pending.length = 0; predict.pausedUntil = 0; }
+
+// A keystroke chunk from xterm (already encoded). Predict single printable chars;
+// any other key (Enter, backspace, arrows, paste, control) resyncs by handing
+// the line back to the server — pending echoes still drain via suppression, but
+// on cursor-moving keys we stop adding and let the server redraw.
+function predictInput(d) {
+  if (!predict.on || predict.alt || performance.now() < predict.pausedUntil) return;
+  if (d.length === 1 && isPrintable(d.charCodeAt(0))) {
+    term.write(d);
+    predict.pending.push(d.charCodeAt(0));
+    return;
+  }
+  if (d === "\r" || d === "\n") return; // Enter: keep pending so its echo suppresses; do not predict
+  // cursor-moving / editing / control input: stop predicting for a moment and
+  // let the authoritative stream redraw. Do not erase (chars may be real).
+  predict.pending.length = 0;
+  predict.pausedUntil = performance.now() + 400;
+}
+
+// Server output bytes. Returns the bytes to actually write to xterm after
+// suppressing confirmed echoes and reacting to alt-screen / password prompts.
+function predictOutput(bytes) {
+  if (predict.on) {
+    const text = asciiDecoder.decode(bytes);
+    if (text.includes("\x1b[?1049h") || text.includes("\x1b[?47h")) { predict.alt = true; predict.pending.length = 0; }
+    if (text.includes("\x1b[?1049l") || text.includes("\x1b[?47l")) predict.alt = false;
+    // Password / passphrase / PIN prompt → never echo the coming input locally.
+    if (/(passwor|passphrase|\bPIN\b|verification code)[^\n]*$/i.test(text)) {
+      predictClear(true);
+      predict.pausedUntil = performance.now() + 10000;
+    }
+  }
+  if (!predict.pending.length) return bytes;
+  let i = 0;
+  while (i < bytes.length && predict.pending.length && bytes[i] === predict.pending[0]) { i++; predict.pending.shift(); }
+  if (i > 0) return bytes.subarray(i); // matched echoes already shown as predictions
+  // Pending predictions but the server sent something else first: diverged
+  // (echo-off or real output). Erase the shown predictions, then show the truth.
+  predictClear(true);
+  predict.pausedUntil = performance.now() + 600;
+  return bytes;
+}
+
 function ensureTerm() {
   if (term) { try { term.dispose(); } catch (_) { /* noop */ } els.term.innerHTML = ""; term = null; }
+  predictReset();
   bootT0 = performance.now();
   // eslint-disable-next-line no-undef
   term = new Terminal({
@@ -360,7 +422,11 @@ async function connect() {
     // ws is open — wire the Go transport; its status pings drive the next steps.
     const handle = window.spacehatchSSHConnect({
       sink: (u8) => { try { ws.send(u8); } catch (_) { /* closed */ } },
-      onData: (u8) => { enterGateUntil = 0; term.write(typeof u8 === "string" ? u8 : new Uint8Array(u8)); },
+      onData: (u8) => {
+        enterGateUntil = 0;
+        const bytes = typeof u8 === "string" ? new TextEncoder().encode(u8) : new Uint8Array(u8);
+        term.write(predictOutput(bytes));
+      },
       onStatus: (s) => {
         if (/(…|\.\.\.)\s*$/.test(s)) stepStart(goTopic(s));
         else if (/connected\s*$/.test(s) && stepActive) stepOK();
@@ -381,7 +447,9 @@ async function connect() {
       if (stepActive) stepOK();
       term.writeln("\x1b[90m" + "-".repeat(72) + "\x1b[0m");
       term.focus();
-      term.onData((d) => shell.write(d));
+      // Enable predictive local echo now that the interactive shell is live.
+      predict.on = true; predict.alt = false; predict.pending.length = 0; predict.pausedUntil = 0;
+      term.onData((d) => { shell.write(d); predictInput(d); });
       let lastCols = term.cols, lastRows = term.rows;
       term.onResize(({ cols, rows }) => {
         if (cols === lastCols && rows === lastRows) return;
