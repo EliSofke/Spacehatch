@@ -3,10 +3,15 @@
  * Spacehatch SSH boot — the thin JS half of the Stufe-2 endgame.
  *
  * JS does only: GitHub REST (existence/start/poll + tunnelProperties), the
- * worker /tunnel hop, opening ONE relay WebSocket, and rendering xterm. The
- * whole protocol (dev-tunnels relay SSH, grpc agent StartRemoteServer, the
- * codespace SSH shell) runs in the Go/WASM module via spacehatchSSHConnect().
+ * worker /tunnel hop, opening ONE relay WebSocket, and rendering the terminal
+ * (wterm's DOM renderer driven by the libghostty VT core via WASM — portable
+ * across browsers, native selection/find/a11y). The whole protocol (dev-tunnels
+ * relay SSH, grpc agent StartRemoteServer, the codespace SSH shell) runs in the
+ * Go/WASM module via spacehatchSSHConnect().
  */
+
+import { WTerm } from "https://esm.sh/@wterm/dom@0.3.0";
+import { GhosttyCore } from "https://esm.sh/@wterm/ghostty@0.3.0";
 
 const cfg = window.SPACEHATCH_D_CONFIG || {};
 const WORKER_URL = (cfg.workerUrl || "").replace(/\/$/, "");
@@ -27,50 +32,28 @@ els.repo.value = params.get("repo") || cfg.repo || "";
 // ---- the main terminal doubles as the boot console ------------------------
 // Diagnostics print into the terminal like a Linux boot (kernel timestamps +
 // [  OK  ] tags), then the codespace shell takes over in the same window.
-let term = null, fit = null, bootT0 = 0;
+let term = null, bootT0 = 0, wtObserver = null;
 
-function ensureTerm() {
-  if (term) { try { term.dispose(); } catch (_) { /* noop */ } els.term.innerHTML = ""; term = null; }
+// GhosttyCore (libghostty's VT100/VT220 parser compiled to WASM) is loaded once
+// and shared across (re)connects. It gives wterm full VT emulation.
+let coreReady;
+function loadCore() { if (!coreReady) coreReady = GhosttyCore.load(); return coreReady; }
+
+async function ensureTerm() {
+  if (term) { try { term.destroy(); } catch (_) { /* noop */ } els.term.innerHTML = ""; term = null; }
+  if (wtObserver) { try { wtObserver.disconnect(); } catch (_) { /* noop */ } wtObserver = null; }
   bootT0 = performance.now();
-  // eslint-disable-next-line no-undef
-  term = new Terminal({
-    fontSize: 13,
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-    cursorBlink: true,
-    theme: { background: "#0b0e14", foreground: "#d7dae0" },
-  });
-  // eslint-disable-next-line no-undef
-  fit = new FitAddon.FitAddon();
-  term.loadAddon(fit);
-  term.open(els.term);
-  loadRenderer(term);
-  fit.fit();
+  const core = await loadCore();
+  term = new WTerm(els.term, { core });
+  await term.init(); // measures the cell metrics and fits to the container
   window.__sshTerm = term;
   return term;
 }
 
-// Prefer an accelerated renderer (WebGL, then Canvas) over xterm's default DOM
-// renderer. The DOM renderer can accumulate sub-pixel row rounding and leave
-// visual gaps (apparent blank lines) between rows after scrolling on some
-// browsers; the logical buffer is unaffected, so this is purely a rendering fix.
-// Must run after term.open().
-function loadRenderer(t) {
-  if (typeof WebglAddon !== "undefined" && WebglAddon.WebglAddon) {
-    try {
-      const webgl = new WebglAddon.WebglAddon();
-      webgl.onContextLoss(() => { try { webgl.dispose(); } catch (_) { /* noop */ } loadCanvas(t); });
-      t.loadAddon(webgl);
-      return;
-    } catch (_) { /* WebGL unavailable — fall back to Canvas */ }
-  }
-  loadCanvas(t);
-}
-
-function loadCanvas(t) {
-  if (typeof CanvasAddon !== "undefined" && CanvasAddon.CanvasAddon) {
-    try { t.loadAddon(new CanvasAddon.CanvasAddon()); } catch (_) { /* DOM fallback */ }
-  }
-}
+// wterm exposes write() but no writeln(); emulate it. A single streaming UTF-8
+// decoder turns host byte chunks into strings without splitting multibyte runes.
+const wln = (s = "") => { if (term) term.write(s + "\r\n"); };
+const outDecoder = new TextDecoder();
 
 function tstamp() {
   const s = ((performance.now() - bootT0) / 1000).toFixed(6);
@@ -105,13 +88,13 @@ function stepFinish(tag) {
   if (stepTimer) { clearInterval(stepTimer); stepTimer = 0; }
   if (!term || !stepActive) return;
   drawStep(tag);
-  term.writeln("");
+  term.write("\r\n");
   stepActive = false;
 }
 function stepOK() { stepFinish(TAG_OK); }
 function stepFail() { stepFinish(TAG_FAIL); }
 // Error detail printed under a failed step.
-function detail(msg) { if (term) term.writeln(`               \x1b[31m${msg}\x1b[0m`); }
+function detail(msg) { if (term) term.write(`               \x1b[31m${msg}\x1b[0m\r\n`); }
 
 function setStatus(s) { if (els.status) els.status.textContent = s; }
 
@@ -243,7 +226,7 @@ async function connect() {
   if (!owner || !repo) { setStatus("enter owner and repo"); return; }
   els.connect.disabled = true;
 
-  ensureTerm();
+  await ensureTerm();
   // neofetch-style header: cyan logo on the left, three attributes. Version and
   // commit come from version.json (generated at deploy).
   const v = await loadVersion();
@@ -252,10 +235,10 @@ async function connect() {
   if (v.version) ver += `${CY}v${v.version}${RS}`;
   if (v.commit) ver += `${ver ? " " : ""}${D}(${v.commit})${RS}`;
   const lbl = (s) => `${CB}${s.padEnd(10)}${RS}`;
-  term.writeln(`${CY}/------\\${RS}   ${CB}SpaceHatch${RS} ${ver}`);
-  term.writeln(`${CY}[> SH <]${RS}   ${lbl("Terminal")}Xterm.js`);
-  term.writeln(`${CY}\\------/${RS}   ${lbl("Target")}${owner}/${repo}`);
-  term.writeln("");
+  wln(`${CY}/------\\${RS}   ${CB}SpaceHatch${RS} ${ver}`);
+  wln(`${CY}[> SH <]${RS}   ${lbl("Terminal")}wterm + Ghostty`);
+  wln(`${CY}\\------/${RS}   ${lbl("Target")}${owner}/${repo}`);
+  wln("");
 
   try {
     setStatus("launching …");
@@ -300,7 +283,7 @@ async function connect() {
     // ws is open — wire the Go transport; its status pings drive the next steps.
     const handle = window.spacehatchSSHConnect({
       sink: (u8) => { try { ws.send(u8); } catch (_) { /* closed */ } },
-      onData: (u8) => term.write(typeof u8 === "string" ? u8 : new Uint8Array(u8)),
+      onData: (u8) => term.write(typeof u8 === "string" ? u8 : outDecoder.decode(new Uint8Array(u8), { stream: true })),
       onStatus: (s) => {
         if (/(…|\.\.\.)\s*$/.test(s)) stepStart(goTopic(s));
         else if (/connected\s*$/.test(s) && stepActive) stepOK();
@@ -317,20 +300,21 @@ async function connect() {
     ws.onclose = () => { /* handled by the connect promise */ };
     handle.promise.then((shell) => {
       if (stepActive) stepOK();
-      term.writeln("\x1b[90m" + "-".repeat(72) + "\x1b[0m");
+      wln("\x1b[90m" + "-".repeat(72) + "\x1b[0m");
       term.focus();
-      term.onData((d) => shell.write(d));
+      term.onData = (d) => shell.write(d);
+      // Forward size changes to the remote PTY. wterm auto-fits to its container
+      // (internal ResizeObserver) and updates term.cols/term.rows; we watch for a
+      // real change and send a single WindowChange. rAF lets wterm settle first.
       let lastCols = term.cols, lastRows = term.rows;
-      term.onResize(({ cols, rows }) => {
-        if (cols === lastCols && rows === lastRows) return;
-        lastCols = cols; lastRows = rows;
-        shell.resize(cols, rows);
+      const syncResize = () => requestAnimationFrame(() => {
+        if (!term || (term.cols === lastCols && term.rows === lastRows)) return;
+        lastCols = term.cols; lastRows = term.rows;
+        shell.resize(term.cols, term.rows);
       });
-      let fitTimer = 0;
-      window.addEventListener("resize", () => {
-        clearTimeout(fitTimer);
-        fitTimer = setTimeout(() => fit.fit(), 150);
-      });
+      wtObserver = new ResizeObserver(syncResize);
+      wtObserver.observe(els.term);
+      window.addEventListener("resize", syncResize);
       setStatus("connected");
     }).catch((err) => { if (stepActive) stepFail(); detail(String(err)); setStatus("failed"); });
   } catch (e) {
