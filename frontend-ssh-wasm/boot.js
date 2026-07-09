@@ -165,7 +165,7 @@ function tstamp() {
 // OK (green) or FAIL (red) in place when it ends. Topics are written actively
 // ("Provisioning codespace", "Attaching tunnel host", …). One step at a time;
 // starting a new step completes the previous one as OK.
-const SPIN_FRAMES = "⣾⣽⣻⢿⡿⣟⣯⣷";
+const SPIN_FRAMES = "⠦⠖⠲⠴";
 let stepTimer = 0, stepTopic = "", stepTs = "", stepFrame = 0, stepActive = false;
 
 const TAG_OK = "[ \x1b[32mOK\x1b[0m ]";
