@@ -3,14 +3,10 @@
  * Spacehatch SSH boot — the thin JS half of the Stufe-2 endgame.
  *
  * JS does only: GitHub REST (existence/start/poll + tunnelProperties), the
- * worker /tunnel hop, opening ONE relay WebSocket, and rendering the terminal
- * (Chromium's hterm — hterm.Terminal + io, VT100 emulation in JS). The whole
- * protocol (dev-tunnels relay SSH, grpc agent StartRemoteServer, the codespace
- * SSH shell) runs in the Go/WASM module via spacehatchSSHConnect().
+ * worker /tunnel hop, opening ONE relay WebSocket, and rendering xterm. The
+ * whole protocol (dev-tunnels relay SSH, grpc agent StartRemoteServer, the
+ * codespace SSH shell) runs in the Go/WASM module via spacehatchSSHConnect().
  */
-
-import htermPkg from "https://esm.sh/hterm-umdjs@1.4.1";
-const { hterm, lib } = htermPkg;
 
 const cfg = window.SPACEHATCH_D_CONFIG || {};
 const WORKER_URL = (cfg.workerUrl || "").replace(/\/$/, "");
@@ -31,58 +27,50 @@ els.repo.value = params.get("repo") || cfg.repo || "";
 // ---- the main terminal doubles as the boot console ------------------------
 // Diagnostics print into the terminal like a Linux boot (kernel timestamps +
 // [  OK  ] tags), then the codespace shell takes over in the same window.
-let term = null, termIO = null, bootT0 = 0, activeShell = null;
+let term = null, fit = null, bootT0 = 0;
 
-// hterm needs a one-time lib.init() and a storage backend before any Terminal.
-let htermReady;
-function initHterm() {
-  if (!htermReady) htermReady = new Promise((resolve) => {
-    hterm.defaultStorage = new lib.Storage.Memory();
-    lib.init(() => resolve());
-  });
-  return htermReady;
-}
-
-// Create an hterm.Terminal, decorate the container, wire I/O, and resolve once
-// it is ready. Input (keystrokes/paste) and size changes are forwarded to the
-// active SSH shell; output is written via termIO.print.
-async function ensureTerm() {
-  await initHterm();
-  if (term) { try { term.uninstallKeyboard(); } catch (_) { /* noop */ } }
-  els.term.innerHTML = "";
-  term = null; termIO = null;
+function ensureTerm() {
+  if (term) { try { term.dispose(); } catch (_) { /* noop */ } els.term.innerHTML = ""; term = null; }
   bootT0 = performance.now();
-  return new Promise((resolve) => {
-    const t = new hterm.Terminal();
-    const p = t.getPrefs();
-    p.set("background-color", "#0b0e14");
-    p.set("foreground-color", "#d7dae0");
-    p.set("cursor-color", "rgba(122, 162, 247, 0.65)");
-    p.set("font-size", 13);
-    p.set("font-family", '"ui-monospace", "SFMono-Regular", Menlo, Consolas, "DejaVu Sans Mono", monospace');
-    p.set("scrollbar-visible", false);
-    p.set("audible-bell-sound", "");
-    p.set("enable-clipboard-notice", false);
-    p.set("copy-on-select", false);
-    t.onTerminalReady = () => {
-      const io = t.io.push();
-      io.onVTKeystroke = (s) => { if (activeShell) activeShell.write(s); };
-      io.sendString = io.onVTKeystroke; // pasted text, generated strings
-      io.onTerminalResize = (cols, rows) => { if (activeShell) activeShell.resize(cols, rows); };
-      term = t; termIO = io;
-      window.__sshTerm = t;
-      resolve(t);
-    };
-    t.decorate(els.term);
-    t.installKeyboard();
+  // eslint-disable-next-line no-undef
+  term = new Terminal({
+    fontSize: 13,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    cursorBlink: true,
+    theme: { background: "#0b0e14", foreground: "#d7dae0" },
   });
+  // eslint-disable-next-line no-undef
+  fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(els.term);
+  loadRenderer(term);
+  fit.fit();
+  window.__sshTerm = term;
+  return term;
 }
 
-// hterm output goes through termIO.print (VT interpreted). writeln is emulated;
-// a single streaming UTF-8 decoder turns host byte chunks into JS strings
-// without splitting multibyte runes across chunks.
-const wln = (s = "") => { if (termIO) termIO.print(s + "\r\n"); };
-const outDecoder = new TextDecoder();
+// Prefer an accelerated renderer (WebGL, then Canvas) over xterm's default DOM
+// renderer. The DOM renderer can accumulate sub-pixel row rounding and leave
+// visual gaps (apparent blank lines) between rows after scrolling on some
+// browsers; the logical buffer is unaffected, so this is purely a rendering fix.
+// Must run after term.open().
+function loadRenderer(t) {
+  if (typeof WebglAddon !== "undefined" && WebglAddon.WebglAddon) {
+    try {
+      const webgl = new WebglAddon.WebglAddon();
+      webgl.onContextLoss(() => { try { webgl.dispose(); } catch (_) { /* noop */ } loadCanvas(t); });
+      t.loadAddon(webgl);
+      return;
+    } catch (_) { /* WebGL unavailable — fall back to Canvas */ }
+  }
+  loadCanvas(t);
+}
+
+function loadCanvas(t) {
+  if (typeof CanvasAddon !== "undefined" && CanvasAddon.CanvasAddon) {
+    try { t.loadAddon(new CanvasAddon.CanvasAddon()); } catch (_) { /* DOM fallback */ }
+  }
+}
 
 function tstamp() {
   const s = ((performance.now() - bootT0) / 1000).toFixed(6);
@@ -94,14 +82,14 @@ function tstamp() {
 // OK (green) or FAIL (red) in place when it ends. Topics are written actively
 // ("Provisioning codespace", "Attaching tunnel host", …). One step at a time;
 // starting a new step completes the previous one as OK.
-const SPIN_FRAMES = "⠦⠖⠲⠴"; // clockwise: the gap rotates TR → BR → BL → TL
+const SPIN_FRAMES = "⣾⣽⣻⢿⡿⣟⣯⣷";
 let stepTimer = 0, stepTopic = "", stepTs = "", stepFrame = 0, stepActive = false;
 
 const TAG_OK = "[ \x1b[32mOK\x1b[0m ]";
 const TAG_FAIL = "[\x1b[31mFAIL\x1b[0m]";
 function tagSpin() { return `[ \x1b[38;5;214m${SPIN_FRAMES[stepFrame % SPIN_FRAMES.length]}\x1b[0m  ]`; }
 
-function drawStep(tag) { if (termIO) termIO.print(`\r\x1b[K${stepTs} ${tag} ${stepTopic}`); }
+function drawStep(tag) { if (term) term.write(`\r\x1b[K${stepTs} ${tag} ${stepTopic}`); }
 
 function stepStart(topic) {
   if (!term) return;
@@ -117,13 +105,13 @@ function stepFinish(tag) {
   if (stepTimer) { clearInterval(stepTimer); stepTimer = 0; }
   if (!term || !stepActive) return;
   drawStep(tag);
-  termIO.print("\r\n");
+  term.writeln("");
   stepActive = false;
 }
 function stepOK() { stepFinish(TAG_OK); }
 function stepFail() { stepFinish(TAG_FAIL); }
 // Error detail printed under a failed step.
-function detail(msg) { if (termIO) termIO.print(`               \x1b[31m${msg}\x1b[0m\r\n`); }
+function detail(msg) { if (term) term.writeln(`               \x1b[31m${msg}\x1b[0m`); }
 
 function setStatus(s) { if (els.status) els.status.textContent = s; }
 
@@ -255,7 +243,7 @@ async function connect() {
   if (!owner || !repo) { setStatus("enter owner and repo"); return; }
   els.connect.disabled = true;
 
-  await ensureTerm();
+  ensureTerm();
   // neofetch-style header: cyan logo on the left, three attributes. Version and
   // commit come from version.json (generated at deploy).
   const v = await loadVersion();
@@ -264,10 +252,10 @@ async function connect() {
   if (v.version) ver += `${CY}v${v.version}${RS}`;
   if (v.commit) ver += `${ver ? " " : ""}${D}(${v.commit})${RS}`;
   const lbl = (s) => `${CB}${s.padEnd(10)}${RS}`;
-  wln(`${CY}/------\\${RS}   ${CB}SpaceHatch${RS} ${ver}`);
-  wln(`${CY}[> SH <]${RS}   ${lbl("Terminal")}hterm`);
-  wln(`${CY}\\------/${RS}   ${lbl("Target")}${owner}/${repo}`);
-  wln("");
+  term.writeln(`${CY}/------\\${RS}   ${CB}SpaceHatch${RS} ${ver}`);
+  term.writeln(`${CY}[> SH <]${RS}   ${lbl("Terminal")}Xterm.js`);
+  term.writeln(`${CY}\\------/${RS}   ${lbl("Target")}${owner}/${repo}`);
+  term.writeln("");
 
   try {
     setStatus("launching …");
@@ -312,7 +300,7 @@ async function connect() {
     // ws is open — wire the Go transport; its status pings drive the next steps.
     const handle = window.spacehatchSSHConnect({
       sink: (u8) => { try { ws.send(u8); } catch (_) { /* closed */ } },
-      onData: (u8) => { if (termIO) termIO.print(typeof u8 === "string" ? u8 : outDecoder.decode(new Uint8Array(u8), { stream: true })); },
+      onData: (u8) => term.write(typeof u8 === "string" ? u8 : new Uint8Array(u8)),
       onStatus: (s) => {
         if (/(…|\.\.\.)\s*$/.test(s)) stepStart(goTopic(s));
         else if (/connected\s*$/.test(s) && stepActive) stepOK();
@@ -321,19 +309,28 @@ async function connect() {
       cluster: tp.clusterId,
       tunnelId: tp.tunnelId,
       managePortsToken: tp.managePortsAccessToken || "",
-      cols: term.screenSize.width,
-      rows: term.screenSize.height,
+      cols: term.cols,
+      rows: term.rows,
     });
     ws.onmessage = (e) => handle.push(new Uint8Array(e.data));
     ws.onerror = () => { /* failure surfaces via the connect promise / close */ };
     ws.onclose = () => { /* handled by the connect promise */ };
     handle.promise.then((shell) => {
       if (stepActive) stepOK();
-      wln("\x1b[90m" + "-".repeat(72) + "\x1b[0m");
-      // hterm's io callbacks (wired in ensureTerm) forward keystrokes/paste and
-      // pty resizes to whichever shell is active.
-      activeShell = shell;
+      term.writeln("\x1b[90m" + "-".repeat(72) + "\x1b[0m");
       term.focus();
+      term.onData((d) => shell.write(d));
+      let lastCols = term.cols, lastRows = term.rows;
+      term.onResize(({ cols, rows }) => {
+        if (cols === lastCols && rows === lastRows) return;
+        lastCols = cols; lastRows = rows;
+        shell.resize(cols, rows);
+      });
+      let fitTimer = 0;
+      window.addEventListener("resize", () => {
+        clearTimeout(fitTimer);
+        fitTimer = setTimeout(() => fit.fit(), 150);
+      });
       setStatus("connected");
     }).catch((err) => { if (stepActive) stepFail(); detail(String(err)); setStatus("failed"); });
   } catch (e) {

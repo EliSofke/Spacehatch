@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Spacehatch — SSH (canonical Go transport)</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
   <style>
     :root { color-scheme: dark; }
     body { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #0b0e14; color: #d7dae0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
@@ -14,7 +15,7 @@
     input#token { flex: 1 1 320px; }
     button { background: #7aa2f7; color: #0b0e14; border: 0; border-radius: 6px; padding: 7px 14px; font: inherit; font-weight: 600; cursor: pointer; }
     button:disabled { opacity: .5; cursor: default; }
-    #term { flex: 1 1 auto; min-height: 0; padding: 6px 10px 10px; background: #0b0e14; }
+    #term { flex: 1 1 auto; min-height: 0; padding: 6px 10px 10px; }
   </style>
 </head>
 <body>
@@ -30,6 +31,10 @@
   </div>
   <div id="term"></div>
 
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.18.0/lib/addon-webgl.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-canvas@0.7.0/lib/addon-canvas.min.js"></script>
   <script>
     // Optional deploy-time config (workerUrl, owner, repo). Pages injects this.
     window.SPACEHATCH_D_CONFIG = window.SPACEHATCH_D_CONFIG || {
