@@ -3,13 +3,10 @@
  * Spacehatch SSH boot — the thin JS half of the Stufe-2 endgame.
  *
  * JS does only: GitHub REST (existence/start/poll + tunnelProperties), the
- * worker /tunnel hop, opening ONE relay WebSocket, and rendering the terminal
- * (Ghostty's VT100 parser via WASM, xterm.js-compatible API). The whole protocol
- * (dev-tunnels relay SSH, grpc agent StartRemoteServer, the codespace SSH shell)
- * runs in the Go/WASM module via spacehatchSSHConnect().
+ * worker /tunnel hop, opening ONE relay WebSocket, and rendering xterm. The
+ * whole protocol (dev-tunnels relay SSH, grpc agent StartRemoteServer, the
+ * codespace SSH shell) runs in the Go/WASM module via spacehatchSSHConnect().
  */
-
-import { init as ghosttyInit, Terminal, FitAddon } from "https://esm.sh/ghostty-web@0.4.0";
 
 const cfg = window.SPACEHATCH_D_CONFIG || {};
 const WORKER_URL = (cfg.workerUrl || "").replace(/\/$/, "");
@@ -32,26 +29,47 @@ els.repo.value = params.get("repo") || cfg.repo || "";
 // [  OK  ] tags), then the codespace shell takes over in the same window.
 let term = null, fit = null, bootT0 = 0;
 
-// Ghostty's WASM VT100 parser must be initialised once before any Terminal is
-// constructed. Cached so repeated connects reuse the same module.
-let ghosttyReady;
-function initGhostty() { if (!ghosttyReady) ghosttyReady = ghosttyInit(); return ghosttyReady; }
-
-async function ensureTerm() {
+function ensureTerm() {
   if (term) { try { term.dispose(); } catch (_) { /* noop */ } els.term.innerHTML = ""; term = null; }
   bootT0 = performance.now();
+  // eslint-disable-next-line no-undef
   term = new Terminal({
     fontSize: 13,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
     cursorBlink: true,
     theme: { background: "#0b0e14", foreground: "#d7dae0" },
   });
-  fit = new FitAddon();
+  // eslint-disable-next-line no-undef
+  fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
-  await term.open(els.term); // ghostty-web's open() may be async (WASM + canvas)
+  term.open(els.term);
+  loadRenderer(term);
   fit.fit();
   window.__sshTerm = term;
   return term;
+}
+
+// Prefer an accelerated renderer (WebGL, then Canvas) over xterm's default DOM
+// renderer. The DOM renderer can accumulate sub-pixel row rounding and leave
+// visual gaps (apparent blank lines) between rows after scrolling on some
+// browsers; the logical buffer is unaffected, so this is purely a rendering fix.
+// Must run after term.open().
+function loadRenderer(t) {
+  if (typeof WebglAddon !== "undefined" && WebglAddon.WebglAddon) {
+    try {
+      const webgl = new WebglAddon.WebglAddon();
+      webgl.onContextLoss(() => { try { webgl.dispose(); } catch (_) { /* noop */ } loadCanvas(t); });
+      t.loadAddon(webgl);
+      return;
+    } catch (_) { /* WebGL unavailable — fall back to Canvas */ }
+  }
+  loadCanvas(t);
+}
+
+function loadCanvas(t) {
+  if (typeof CanvasAddon !== "undefined" && CanvasAddon.CanvasAddon) {
+    try { t.loadAddon(new CanvasAddon.CanvasAddon()); } catch (_) { /* DOM fallback */ }
+  }
 }
 
 function tstamp() {
@@ -225,8 +243,7 @@ async function connect() {
   if (!owner || !repo) { setStatus("enter owner and repo"); return; }
   els.connect.disabled = true;
 
-  await initGhostty();
-  await ensureTerm();
+  ensureTerm();
   // neofetch-style header: cyan logo on the left, three attributes. Version and
   // commit come from version.json (generated at deploy).
   const v = await loadVersion();
@@ -236,7 +253,7 @@ async function connect() {
   if (v.commit) ver += `${ver ? " " : ""}${D}(${v.commit})${RS}`;
   const lbl = (s) => `${CB}${s.padEnd(10)}${RS}`;
   term.writeln(`${CY}/------\\${RS}   ${CB}SpaceHatch${RS} ${ver}`);
-  term.writeln(`${CY}[> SH <]${RS}   ${lbl("Terminal")}Ghostty (web)`);
+  term.writeln(`${CY}[> SH <]${RS}   ${lbl("Terminal")}Xterm.js`);
   term.writeln(`${CY}\\------/${RS}   ${lbl("Target")}${owner}/${repo}`);
   term.writeln("");
 
