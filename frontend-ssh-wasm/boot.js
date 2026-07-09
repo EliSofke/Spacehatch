@@ -49,16 +49,20 @@ function ensureTerm() {
   // contains real blank lines — readline echoes each accepted Enter ("\r\n")
   // immediately while the prompt redraws arrive later in groups, so echoes stack
   // into empty lines. Identical in Chrome and Firefox because it is pty output,
-  // not rendering. Fix at the source: don't forward Enter auto-repeat (holding
-  // Enter = one submit) and pace other held keys; distinct keystrokes and paste
-  // are untouched.
+  // not rendering. Fix at the source: don't forward key auto-repeat for Enter.
+  // Returning false alone is NOT enough — xterm then skips preventDefault and the
+  // browser fires a follow-up keypress that sends the "\r" anyway. So repeats are
+  // dropped on ALL event types AND preventDefault() suppresses the keypress.
+  // Other held keys are paced to ~16/s; distinct keystrokes and paste untouched.
   let lastRepeat = 0;
   term.attachCustomKeyEventHandler((e) => {
-    if (e.type !== "keydown" || !e.repeat) return true;
-    if (e.key === "Enter") return false;
-    const now = performance.now();
-    if (now - lastRepeat < 60) return false; // ~16 repeats/s for held non-Enter keys
-    lastRepeat = now;
+    if (!e.repeat) return true;
+    if (e.key === "Enter") { e.preventDefault(); return false; }
+    if (e.type === "keydown") {
+      const now = performance.now();
+      if (now - lastRepeat < 60) { e.preventDefault(); return false; }
+      lastRepeat = now;
+    }
     return true;
   });
   fit.fit();
