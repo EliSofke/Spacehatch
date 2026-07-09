@@ -273,11 +273,23 @@ export class RelayProxy {
     // Keep references so the bridge isn't collected while the session is live.
     this._bridge = { serverSide, upstream };
 
-    const negotiated = upstreamResp.headers.get("Sec-WebSocket-Protocol") || "tunnel-relay-client-v2-dev";
+    // RFC 6455: the subprotocol we return MUST be one the client offered, or the
+    // browser rejects the handshake (close 1006). The upstream relay sometimes
+    // omits the Sec-WebSocket-Protocol header; never fall back to a value the
+    // client didn't offer. Echo upstream's choice only if the client offered it,
+    // else the first known subprotocol the client actually sent.
+    const upstreamNeg = upstreamResp.headers.get("Sec-WebSocket-Protocol");
+    const clientKnown = offered.filter((p) => KNOWN.has(p));
+    const negotiated =
+      (upstreamNeg && offered.includes(upstreamNeg) && upstreamNeg) ||
+      clientKnown[0] ||
+      offered[0];
+    const respHeaders = { };
+    if (negotiated) respHeaders["Sec-WebSocket-Protocol"] = negotiated;
     return new Response(null, {
       status: 101,
       webSocket: clientSide,
-      headers: { "Sec-WebSocket-Protocol": negotiated },
+      headers: respHeaders,
     });
   }
 }

@@ -151,38 +151,64 @@ async function connect() {
     window.__sshTerm = term;
 
     setStatus("connecting …");
-    const ws = new WebSocket(relayUri, ["tunnel-relay-client", tp.connectAccessToken]);
-    ws.binaryType = "arraybuffer";
+    const ws = await openRelay(relayUri, tp.connectAccessToken);
 
-    ws.onopen = () => {
-      const handle = window.spacehatchSSHConnect({
-        sink: (u8) => { try { ws.send(u8); } catch (_) { /* closed */ } },
-        onData: (u8) => term.write(typeof u8 === "string" ? u8 : new Uint8Array(u8)),
-        onStatus: (s) => log(s),
-        workerUrl: WORKER_URL,
-        cluster: tp.clusterId,
-        tunnelId: tp.tunnelId,
-        managePortsToken: tp.managePortsAccessToken || "",
-        cols: term.cols,
-        rows: term.rows,
-      });
-      ws.onmessage = (e) => handle.push(new Uint8Array(e.data));
-      handle.promise.then((shell) => {
-        term.onData((d) => shell.write(d));
-        term.onResize(({ cols, rows }) => shell.resize(cols, rows));
-        window.addEventListener("resize", () => fit.fit());
-        setStatus("connected");
-        log("shell connected");
-      }).catch((err) => { setStatus("failed"); log(`connect failed: ${err}`, "error"); });
-    };
+    // ws is guaranteed open here — wire the Go transport directly.
+    const handle = window.spacehatchSSHConnect({
+      sink: (u8) => { try { ws.send(u8); } catch (_) { /* closed */ } },
+      onData: (u8) => term.write(typeof u8 === "string" ? u8 : new Uint8Array(u8)),
+      onStatus: (s) => log(s),
+      workerUrl: WORKER_URL,
+      cluster: tp.clusterId,
+      tunnelId: tp.tunnelId,
+      managePortsToken: tp.managePortsAccessToken || "",
+      cols: term.cols,
+      rows: term.rows,
+    });
+    ws.onmessage = (e) => handle.push(new Uint8Array(e.data));
     ws.onerror = () => log("relay websocket error", "error");
     ws.onclose = (e) => log(`relay closed (code ${e.code})`, e.code === 1000 ? undefined : "error");
+    handle.promise.then((shell) => {
+      term.onData((d) => shell.write(d));
+      term.onResize(({ cols, rows }) => shell.resize(cols, rows));
+      window.addEventListener("resize", () => fit.fit());
+      setStatus("connected");
+      log("shell connected");
+    }).catch((err) => { setStatus("failed"); log(`connect failed: ${err}`, "error"); });
   } catch (e) {
     setStatus("error");
     log(String(e && e.message ? e.message : e), "error");
   } finally {
     els.connect.disabled = false;
   }
+}
+
+// Open the relay WebSocket, retrying transient early failures (the tunnel host
+// may still be attaching to the relay right after the codespace becomes ready).
+function openRelay(relayUri, token, tries = 4) {
+  const attempt = (n) => new Promise((resolve, reject) => {
+    const ws = new WebSocket(relayUri, ["tunnel-relay-client", token]);
+    ws.binaryType = "arraybuffer";
+    let settled = false;
+    const to = setTimeout(() => finish(false), 9000);
+    function finish(ok) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(to);
+      if (ok) { resolve(ws); return; }
+      try { ws.close(); } catch (_) { /* noop */ }
+      if (n < tries) {
+        log(`relay attempt ${n} failed — retrying …`, "error");
+        setTimeout(() => attempt(n + 1).then(resolve, reject), 1500 * n);
+      } else {
+        reject(new Error("relay websocket did not open after retries"));
+      }
+    }
+    ws.onopen = () => finish(true);
+    ws.onclose = () => finish(false);
+    ws.onerror = () => { /* close follows */ };
+  });
+  return attempt(1);
 }
 
 els.connect.addEventListener("click", connect);
