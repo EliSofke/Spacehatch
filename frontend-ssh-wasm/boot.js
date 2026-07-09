@@ -199,6 +199,10 @@ function detail(msg) {
   if (!term) return;
   for (const line of String(msg).split(/\r?\n/)) term.writeln(`               \x1b[31m${line}\x1b[0m`);
 }
+function info(msg) {
+  if (!term) return;
+  for (const line of String(msg).split(/\r?\n/)) term.writeln(`               \x1b[90m${line}\x1b[0m`);
+}
 
 function setStatus(s) { if (els.status) els.status.textContent = s; renderSysinfo(); }
 
@@ -303,16 +307,28 @@ function stateTopic(_state) {
 }
 
 async function poll(name, want = "Available", tries = 120, delayMs = 2000) {
-  let shown = "";
+  let shown = "", unchanged = 0;
   for (let i = 0; i < tries; i++) {
     const cs = await gh(`/user/codespaces/${encodeURIComponent(name)}`);
     if (cs.state !== shown) {
-      shown = cs.state;
+      shown = cs.state; unchanged = 0;
       setStatus(`${cs.state} …`);
       if (cs.state !== want) stepStart(stateTopic(cs.state));
+    } else {
+      unchanged++;
     }
     if (cs.state === want) return cs;
     if (cs.state === "Failed" || cs.state === "Deleted") throw new Error(`codespace ${cs.state}`);
+    // A stopped codespace that never leaves its state after we asked it to start
+    // means the start did not take effect — commonly a Codespaces spending limit,
+    // an unavailable machine type, or a transient platform issue. Fail fast with
+    // guidance instead of silently polling until the overall timeout.
+    if ((cs.state === "Shutdown" || cs.state === "Unavailable") && unchanged * delayMs >= 30000) {
+      detail(`codespace stuck in ${cs.state} — the start did not take effect.`);
+      detail("open github.com/codespaces to start it manually and see the real reason");
+      detail("(spending limit / machine availability), or delete it there and reconnect.");
+      throw new Error(`codespace stuck in ${cs.state}`);
+    }
     await new Promise((r) => setTimeout(r, delayMs));
   }
   throw new Error(`codespace did not reach ${want} in time`);
@@ -347,7 +363,8 @@ async function launch(owner, repo) {
     // 422) instead of silently polling a Shutdown codespace until timeout.
     if (cs.state === "Shutdown" || cs.state === "Unavailable" || cs.state === "ShuttingDown") {
       try {
-        await gh(`/user/codespaces/${encodeURIComponent(cs.name)}/start`, { method: "POST" });
+        const r = await gh(`/user/codespaces/${encodeURIComponent(cs.name)}/start`, { method: "POST" });
+        if (r && r.state) info(`start acknowledged — codespace reports: ${r.state}`);
       } catch (e) {
         const msg = String(e).replace(/^Error:\s*/, "");
         if (!/\b409\b/.test(msg)) { // 409 = already starting, benign
