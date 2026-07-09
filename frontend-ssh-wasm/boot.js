@@ -205,8 +205,13 @@ async function connect() {
   els.connect.disabled = true;
 
   ensureTerm();
-  term.writeln("\x1b[1;36mSpacehatch\x1b[0m SSH \x1b[90m— codespace over one Go/WASM transport (dev-tunnels + grpc-go + x/crypto/ssh)\x1b[0m");
-  term.writeln("\x1b[90m" + "-".repeat(72) + "\x1b[0m");
+  // neofetch-style header: cyan logo on the left, three boot-time attributes.
+  const CY = "\x1b[36m", CB = "\x1b[1;36m", RS = "\x1b[0m";
+  const lbl = (s) => `${CB}${s.padEnd(11)}${RS}`;
+  term.writeln(`${CY}/------\\${RS}   ${lbl("Transport")}dev-tunnels · grpc-go · x/crypto/ssh`);
+  term.writeln(`${CY}[> SH <]${RS}   ${lbl("Target")}${owner}/${repo}`);
+  term.writeln(`${CY}\\------/${RS}   ${lbl("Engine")}Go → WASM`);
+  term.writeln("");
 
   try {
     setStatus("launching …");
