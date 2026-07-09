@@ -91,33 +91,8 @@ function predictOutput(bytes) {
   return bytes;
 }
 
-// --- Prompt coalescing -------------------------------------------------------
-// The codespace prompt runs git in PROMPT_COMMAND, so on Enter the newline echo
-// and bracketed-paste toggle are flushed a few ms before the redrawn prompt.
-// Over the tunnel those arrive as two chunks, so the cursor visibly drops to a
-// blank new line and only then the prompt appears. If a chunk is a pure
-// transition (a newline plus control sequences, nothing printable), hold it
-// briefly so it renders together with the following prompt. Order-preserving:
-// held bytes are flushed before any later output or on timeout; nothing is
-// dropped or rewritten, and only non-printable chunks are ever delayed.
-let heldTail = null, heldTimer = 0;
-function flushHeld() {
-  if (heldTimer) { clearTimeout(heldTimer); heldTimer = 0; }
-  if (heldTail && term) { const b = heldTail; heldTail = null; term.write(b); }
-  heldTail = null;
-}
-function isBareTransition(text) {
-  if (text.indexOf("\n") < 0) return false;
-  const stripped = text
-    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")     // CSI sequences
-    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "") // OSC sequences
-    .replace(/[\r\n\x00-\x1f]/g, "");               // CR/LF + other C0 controls
-  return stripped.length === 0; // only line break(s) + control sequences remain
-}
-
 function ensureTerm() {
   if (term) { try { term.dispose(); } catch (_) { /* noop */ } els.term.innerHTML = ""; term = null; }
-  flushHeld();
   predictReset();
   bootT0 = performance.now();
   // eslint-disable-next-line no-undef
@@ -438,16 +413,8 @@ async function connect() {
     const handle = window.spacehatchSSHConnect({
       sink: (u8) => { try { ws.send(u8); } catch (_) { /* closed */ } },
       onData: (u8) => {
-        // Flush any held transition chunk first (preserves byte order).
-        if (heldTail) { const b = heldTail; heldTail = null; if (heldTimer) { clearTimeout(heldTimer); heldTimer = 0; } term.write(b); }
         const bytes = typeof u8 === "string" ? new TextEncoder().encode(u8) : new Uint8Array(u8);
-        const out = predictOutput(bytes);
-        if (out.length && isBareTransition(asciiDecoder.decode(out))) {
-          heldTail = out; // wait for the prompt to render them together
-          heldTimer = setTimeout(flushHeld, 90);
-        } else {
-          term.write(out);
-        }
+        term.write(predictOutput(bytes));
       },
       onStatus: (s) => {
         if (/(…|\.\.\.)\s*$/.test(s)) stepStart(goTopic(s));
