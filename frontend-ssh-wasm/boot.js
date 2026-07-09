@@ -182,8 +182,20 @@ async function connect() {
     ws.onclose = (e) => log(`relay closed (code ${e.code})`, e.code === 1000 ? undefined : "error");
     handle.promise.then((shell) => {
       term.onData((d) => shell.write(d));
-      term.onResize(({ cols, rows }) => shell.resize(cols, rows));
-      window.addEventListener("resize", () => fit.fit());
+      // Only forward a resize when the size actually changed, and debounce the
+      // window-resize -> fit cascade. Each resize is a SIGWINCH that makes the
+      // remote shell redraw its prompt; a burst produced dozens of blank prompts.
+      let lastCols = term.cols, lastRows = term.rows;
+      term.onResize(({ cols, rows }) => {
+        if (cols === lastCols && rows === lastRows) return;
+        lastCols = cols; lastRows = rows;
+        shell.resize(cols, rows);
+      });
+      let fitTimer = 0;
+      window.addEventListener("resize", () => {
+        clearTimeout(fitTimer);
+        fitTimer = setTimeout(() => fit.fit(), 150);
+      });
       setStatus("connected");
       log("shell connected");
     }).catch((err) => { setStatus("failed"); log(`connect failed: ${err}`, "error"); });
