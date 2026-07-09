@@ -50,9 +50,17 @@ func connect(this js.Value, args []js.Value) any {
 	sink := opts.Get("sink")
 	onData := opts.Get("onData")
 	onStatus := opts.Get("onStatus")
+	onRtt := opts.Get("onRtt")
 	status := func(s string) {
 		if onStatus.Type() == js.TypeFunction {
 			onStatus.Invoke(s)
+		}
+	}
+	// emitRtt reports a measured round-trip time (milliseconds, sub-ms precision)
+	// for a named stage to JS, if an onRtt callback was provided.
+	emitRtt := func(stage string, d time.Duration) {
+		if onRtt.Type() == js.TypeFunction {
+			onRtt.Invoke(stage, float64(d.Microseconds())/1000.0)
 		}
 	}
 
@@ -71,7 +79,35 @@ func connect(this js.Value, args []js.Value) any {
 				"write":  js.FuncOf(func(_ js.Value, a []js.Value) any { _ = shell.Write([]byte(a[0].String())); return nil }),
 				"resize": js.FuncOf(func(_ js.Value, a []js.Value) any { _ = shell.Resize(a[0].Int(), a[1].Int()); return nil }),
 				"close":  js.FuncOf(func(_ js.Value, a []js.Value) any { _ = shell.Close(); return nil }),
+				// ping() -> Promise<number ms> (-1 on error): on-demand transport RTT.
+				"ping": js.FuncOf(func(_ js.Value, _ []js.Value) any {
+					return js.Global().Get("Promise").New(js.FuncOf(func(_ js.Value, pr []js.Value) any {
+						res := pr[0]
+						go func() {
+							d, err := shell.Ping()
+							if err != nil {
+								res.Invoke(-1.0)
+								return
+							}
+							res.Invoke(float64(d.Microseconds()) / 1000.0)
+						}()
+						return nil
+					}))
+				}),
 			}
+			// Baseline latency probe: emit the full-stack SSH keepalive RTT every
+			// 2 s so the UI can show a live readout. Stops when a ping errors
+			// (connection gone).
+			go func() {
+				for {
+					time.Sleep(2 * time.Second)
+					d, err := shell.Ping()
+					if err != nil {
+						return
+					}
+					emitRtt("ssh", d)
+				}
+			}()
 			resolve.Invoke(js.ValueOf(result))
 		}()
 		return nil

@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -111,6 +112,21 @@ func (s *Shell) Write(p []byte) error {
 // Resize updates the remote pty size (RFC 4254 window-change).
 func (s *Shell) Resize(cols, rows int) error {
 	return s.session.WindowChange(rows, cols)
+}
+
+// Ping measures the round-trip time of an SSH keepalive global request to the
+// codespace sshd. This traverses the full transport path (browser → worker →
+// relay → tunnel host → forwarded port → sshd) and back, without touching the
+// interactive shell, so it isolates network + crypto latency from pty/shell
+// processing. The request is a no-op the server replies to (or rejects — either
+// reply completes the round trip).
+func (s *Shell) Ping() (time.Duration, error) {
+	start := time.Now()
+	_, _, err := s.client.SendRequest("keepalive@openssh.com", true, nil)
+	if err != nil {
+		return 0, err
+	}
+	return time.Since(start), nil
 }
 
 // Close tears down the session and connection.

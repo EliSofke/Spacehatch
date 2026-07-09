@@ -16,6 +16,8 @@
     button { background: #7aa2f7; color: #0b0e14; border: 0; border-radius: 6px; padding: 7px 14px; font: inherit; font-weight: 600; cursor: pointer; }
     button:disabled { opacity: .5; cursor: default; }
     #term { flex: 1 1 auto; min-height: 0; padding: 6px 10px 10px; }
+    #rtt { font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: #6ac26a; border: 1px solid #6ac26a; border-radius: 5px; padding: 1px 6px; letter-spacing: .3px; }
+    #rtt:empty { display: none; }
   </style>
 </head>
 <body>
@@ -28,6 +30,7 @@
     <input id="repo" placeholder="repo" size="18" />
     <button id="connect">Connect</button>
     <span id="status"></span>
+    <span id="rtt"></span>
   </div>
   <div id="term"></div>
 

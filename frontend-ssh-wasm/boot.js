@@ -18,6 +18,7 @@ const els = {
   connect: /** @type {HTMLButtonElement} */ (document.getElementById("connect")),
   status: /** @type {HTMLElement} */ (document.getElementById("status")),
   term: /** @type {HTMLElement} */ (document.getElementById("term")),
+  rtt: /** @type {HTMLElement} */ (document.getElementById("rtt")),
 };
 
 const params = new URLSearchParams(location.search);
@@ -144,6 +145,20 @@ function stepFail() { stepFinish(TAG_FAIL); }
 function detail(msg) { if (term) term.writeln(`               \x1b[31m${msg}\x1b[0m`); }
 
 function setStatus(s) { if (els.status) els.status.textContent = s; }
+
+// Live latency readout. Keeps a light EWMA to smooth jitter and colour-codes the
+// value (green ≤ 80 ms, amber ≤ 200 ms, red beyond). This is the measurement
+// baseline (step A) for the responsiveness work.
+let rttAvg = 0;
+function showRtt(stage, ms) {
+  if (!els.rtt || typeof ms !== "number" || ms < 0) return;
+  rttAvg = rttAvg ? rttAvg * 0.7 + ms * 0.3 : ms;
+  const v = Math.round(rttAvg);
+  const color = v <= 80 ? "#6ac26a" : v <= 200 ? "#e0b341" : "#e06c6c";
+  els.rtt.textContent = `${stage} ${v} ms`;
+  els.rtt.style.color = color;
+  els.rtt.style.borderColor = color;
+}
 
 // Map the Go transport's status pings to active-voice step topics.
 function goTopic(s) {
@@ -335,6 +350,7 @@ async function connect() {
         if (/(…|\.\.\.)\s*$/.test(s)) stepStart(goTopic(s));
         else if (/connected\s*$/.test(s) && stepActive) stepOK();
       },
+      onRtt: (stage, ms) => showRtt(stage, ms),
       workerUrl: WORKER_URL,
       cluster: tp.clusterId,
       tunnelId: tp.tunnelId,
@@ -343,6 +359,7 @@ async function connect() {
       rows: term.rows,
     });
     ws.onmessage = (e) => handle.push(new Uint8Array(e.data));
+    window.__sshHandle = handle; // exposes handle.ping() for latency probes
     ws.onerror = () => { /* failure surfaces via the connect promise / close */ };
     ws.onclose = () => { /* handled by the connect promise */ };
     handle.promise.then((shell) => {
