@@ -4,14 +4,13 @@
  *
  * JS does only: GitHub REST (existence/start/poll + tunnelProperties), the
  * worker /tunnel hop, opening ONE relay WebSocket, and rendering the terminal
- * (wterm's DOM renderer driven by the libghostty VT core via WASM — portable
- * across browsers, native selection/find/a11y). The whole protocol (dev-tunnels
- * relay SSH, grpc agent StartRemoteServer, the codespace SSH shell) runs in the
- * Go/WASM module via spacehatchSSHConnect().
+ * (Chromium's hterm — hterm.Terminal + io, VT100 emulation in JS). The whole
+ * protocol (dev-tunnels relay SSH, grpc agent StartRemoteServer, the codespace
+ * SSH shell) runs in the Go/WASM module via spacehatchSSHConnect().
  */
 
-import { WTerm } from "https://esm.sh/@wterm/dom@0.3.0";
-import { GhosttyCore } from "https://esm.sh/@wterm/ghostty@0.3.0";
+import htermPkg from "https://esm.sh/hterm-umdjs@1.4.1";
+const { hterm, lib } = htermPkg;
 
 const cfg = window.SPACEHATCH_D_CONFIG || {};
 const WORKER_URL = (cfg.workerUrl || "").replace(/\/$/, "");
@@ -32,27 +31,57 @@ els.repo.value = params.get("repo") || cfg.repo || "";
 // ---- the main terminal doubles as the boot console ------------------------
 // Diagnostics print into the terminal like a Linux boot (kernel timestamps +
 // [  OK  ] tags), then the codespace shell takes over in the same window.
-let term = null, bootT0 = 0, wtObserver = null;
+let term = null, termIO = null, bootT0 = 0, activeShell = null;
 
-// GhosttyCore (libghostty's VT100/VT220 parser compiled to WASM) is loaded once
-// and shared across (re)connects. It gives wterm full VT emulation.
-let coreReady;
-function loadCore() { if (!coreReady) coreReady = GhosttyCore.load(); return coreReady; }
-
-async function ensureTerm() {
-  if (term) { try { term.destroy(); } catch (_) { /* noop */ } els.term.innerHTML = ""; term = null; }
-  if (wtObserver) { try { wtObserver.disconnect(); } catch (_) { /* noop */ } wtObserver = null; }
-  bootT0 = performance.now();
-  const core = await loadCore();
-  term = new WTerm(els.term, { core });
-  await term.init(); // measures the cell metrics and fits to the container
-  window.__sshTerm = term;
-  return term;
+// hterm needs a one-time lib.init() and a storage backend before any Terminal.
+let htermReady;
+function initHterm() {
+  if (!htermReady) htermReady = new Promise((resolve) => {
+    hterm.defaultStorage = new lib.Storage.Memory();
+    lib.init(() => resolve());
+  });
+  return htermReady;
 }
 
-// wterm exposes write() but no writeln(); emulate it. A single streaming UTF-8
-// decoder turns host byte chunks into strings without splitting multibyte runes.
-const wln = (s = "") => { if (term) term.write(s + "\r\n"); };
+// Create an hterm.Terminal, decorate the container, wire I/O, and resolve once
+// it is ready. Input (keystrokes/paste) and size changes are forwarded to the
+// active SSH shell; output is written via termIO.print.
+async function ensureTerm() {
+  await initHterm();
+  if (term) { try { term.uninstallKeyboard(); } catch (_) { /* noop */ } }
+  els.term.innerHTML = "";
+  term = null; termIO = null;
+  bootT0 = performance.now();
+  return new Promise((resolve) => {
+    const t = new hterm.Terminal();
+    const p = t.getPrefs();
+    p.set("background-color", "#0b0e14");
+    p.set("foreground-color", "#d7dae0");
+    p.set("cursor-color", "rgba(122, 162, 247, 0.65)");
+    p.set("font-size", 13);
+    p.set("font-family", '"ui-monospace", "SFMono-Regular", Menlo, Consolas, "DejaVu Sans Mono", monospace');
+    p.set("scrollbar-visible", false);
+    p.set("audible-bell-sound", "");
+    p.set("enable-clipboard-notice", false);
+    p.set("copy-on-select", false);
+    t.onTerminalReady = () => {
+      const io = t.io.push();
+      io.onVTKeystroke = (s) => { if (activeShell) activeShell.write(s); };
+      io.sendString = io.onVTKeystroke; // pasted text, generated strings
+      io.onTerminalResize = (cols, rows) => { if (activeShell) activeShell.resize(cols, rows); };
+      term = t; termIO = io;
+      window.__sshTerm = t;
+      resolve(t);
+    };
+    t.decorate(els.term);
+    t.installKeyboard();
+  });
+}
+
+// hterm output goes through termIO.print (VT interpreted). writeln is emulated;
+// a single streaming UTF-8 decoder turns host byte chunks into JS strings
+// without splitting multibyte runes across chunks.
+const wln = (s = "") => { if (termIO) termIO.print(s + "\r\n"); };
 const outDecoder = new TextDecoder();
 
 function tstamp() {
@@ -72,7 +101,7 @@ const TAG_OK = "[ \x1b[32mOK\x1b[0m ]";
 const TAG_FAIL = "[\x1b[31mFAIL\x1b[0m]";
 function tagSpin() { return `[ \x1b[38;5;214m${SPIN_FRAMES[stepFrame % SPIN_FRAMES.length]}\x1b[0m  ]`; }
 
-function drawStep(tag) { if (term) term.write(`\r\x1b[K${stepTs} ${tag} ${stepTopic}`); }
+function drawStep(tag) { if (termIO) termIO.print(`\r\x1b[K${stepTs} ${tag} ${stepTopic}`); }
 
 function stepStart(topic) {
   if (!term) return;
@@ -88,13 +117,13 @@ function stepFinish(tag) {
   if (stepTimer) { clearInterval(stepTimer); stepTimer = 0; }
   if (!term || !stepActive) return;
   drawStep(tag);
-  term.write("\r\n");
+  termIO.print("\r\n");
   stepActive = false;
 }
 function stepOK() { stepFinish(TAG_OK); }
 function stepFail() { stepFinish(TAG_FAIL); }
 // Error detail printed under a failed step.
-function detail(msg) { if (term) term.write(`               \x1b[31m${msg}\x1b[0m\r\n`); }
+function detail(msg) { if (termIO) termIO.print(`               \x1b[31m${msg}\x1b[0m\r\n`); }
 
 function setStatus(s) { if (els.status) els.status.textContent = s; }
 
@@ -236,7 +265,7 @@ async function connect() {
   if (v.commit) ver += `${ver ? " " : ""}${D}(${v.commit})${RS}`;
   const lbl = (s) => `${CB}${s.padEnd(10)}${RS}`;
   wln(`${CY}/------\\${RS}   ${CB}SpaceHatch${RS} ${ver}`);
-  wln(`${CY}[> SH <]${RS}   ${lbl("Terminal")}wterm + Ghostty`);
+  wln(`${CY}[> SH <]${RS}   ${lbl("Terminal")}hterm`);
   wln(`${CY}\\------/${RS}   ${lbl("Target")}${owner}/${repo}`);
   wln("");
 
@@ -283,7 +312,7 @@ async function connect() {
     // ws is open — wire the Go transport; its status pings drive the next steps.
     const handle = window.spacehatchSSHConnect({
       sink: (u8) => { try { ws.send(u8); } catch (_) { /* closed */ } },
-      onData: (u8) => term.write(typeof u8 === "string" ? u8 : outDecoder.decode(new Uint8Array(u8), { stream: true })),
+      onData: (u8) => { if (termIO) termIO.print(typeof u8 === "string" ? u8 : outDecoder.decode(new Uint8Array(u8), { stream: true })); },
       onStatus: (s) => {
         if (/(…|\.\.\.)\s*$/.test(s)) stepStart(goTopic(s));
         else if (/connected\s*$/.test(s) && stepActive) stepOK();
@@ -292,8 +321,8 @@ async function connect() {
       cluster: tp.clusterId,
       tunnelId: tp.tunnelId,
       managePortsToken: tp.managePortsAccessToken || "",
-      cols: term.cols,
-      rows: term.rows,
+      cols: term.screenSize.width,
+      rows: term.screenSize.height,
     });
     ws.onmessage = (e) => handle.push(new Uint8Array(e.data));
     ws.onerror = () => { /* failure surfaces via the connect promise / close */ };
@@ -301,20 +330,10 @@ async function connect() {
     handle.promise.then((shell) => {
       if (stepActive) stepOK();
       wln("\x1b[90m" + "-".repeat(72) + "\x1b[0m");
+      // hterm's io callbacks (wired in ensureTerm) forward keystrokes/paste and
+      // pty resizes to whichever shell is active.
+      activeShell = shell;
       term.focus();
-      term.onData = (d) => shell.write(d);
-      // Forward size changes to the remote PTY. wterm auto-fits to its container
-      // (internal ResizeObserver) and updates term.cols/term.rows; we watch for a
-      // real change and send a single WindowChange. rAF lets wterm settle first.
-      let lastCols = term.cols, lastRows = term.rows;
-      const syncResize = () => requestAnimationFrame(() => {
-        if (!term || (term.cols === lastCols && term.rows === lastRows)) return;
-        lastCols = term.cols; lastRows = term.rows;
-        shell.resize(term.cols, term.rows);
-      });
-      wtObserver = new ResizeObserver(syncResize);
-      wtObserver.observe(els.term);
-      window.addEventListener("resize", syncResize);
       setStatus("connected");
     }).catch((err) => { if (stepActive) stepFail(); detail(String(err)); setStatus("failed"); });
   } catch (e) {
