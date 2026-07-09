@@ -128,16 +128,28 @@ async function connect() {
     const tp = await tunnelProps(name);
     log(`tunnelProperties: cluster=${tp.clusterId} id=${tp.tunnelId}`);
 
-    setStatus("relay …");
-    const relayRes = await fetch(`${WORKER_URL}/tunnel`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cluster: tp.clusterId, tunnelId: tp.tunnelId, token: tp.connectAccessToken }),
-    });
-    if (!relayRes.ok) throw new Error(`/tunnel ${relayRes.status} ${await relayRes.text()}`);
-    const tunnel = await relayRes.json();
-    const relayUri = tunnel.endpoints && tunnel.endpoints[0] && tunnel.endpoints[0].clientRelayUri;
-    if (!relayUri) throw new Error("no clientRelayUri from /tunnel");
+    // Poll /tunnel until the codespace's tunnel host has attached to the relay.
+    // GitHub reports the codespace "Available" a few seconds before its tunnel
+    // host connects; opening the relay WebSocket in that window hits a host-less
+    // tunnel and the relay rejects it (close 1006). status.hostConnectionCount
+    // (passed through by the worker) is the precise readiness signal.
+    setStatus("waiting for tunnel host …");
+    let relayUri;
+    for (let i = 0; ; i++) {
+      const relayRes = await fetch(`${WORKER_URL}/tunnel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cluster: tp.clusterId, tunnelId: tp.tunnelId, token: tp.connectAccessToken }),
+      });
+      if (!relayRes.ok) throw new Error(`/tunnel ${relayRes.status} ${await relayRes.text()}`);
+      const tunnel = await relayRes.json();
+      relayUri = tunnel.endpoints && tunnel.endpoints[0] && tunnel.endpoints[0].clientRelayUri;
+      if (!relayUri) throw new Error("no clientRelayUri from /tunnel");
+      const hostUp = ((tunnel.status && tunnel.status.hostConnectionCount) || 0) >= 1;
+      if (hostUp) { if (i) log(`tunnel host attached after ${i} check(s)`); break; }
+      if (i >= 40) { log("tunnel host not reported ready — trying anyway", "error"); break; }
+      await new Promise((r) => setTimeout(r, 750));
+    }
 
     await loadGo();
 
@@ -190,7 +202,7 @@ function openRelay(relayUri, token, tries = 4) {
     const ws = new WebSocket(relayUri, ["tunnel-relay-client", token]);
     ws.binaryType = "arraybuffer";
     let settled = false;
-    const to = setTimeout(() => finish(false), 9000);
+    const to = setTimeout(() => finish(false), 7000);
     function finish(ok) {
       if (settled) return;
       settled = true;
@@ -199,7 +211,7 @@ function openRelay(relayUri, token, tries = 4) {
       try { ws.close(); } catch (_) { /* noop */ }
       if (n < tries) {
         log(`relay attempt ${n} failed — retrying …`, "error");
-        setTimeout(() => attempt(n + 1).then(resolve, reject), 1500 * n);
+        setTimeout(() => attempt(n + 1).then(resolve, reject), 600 * n);
       } else {
         reject(new Error("relay websocket did not open after retries"));
       }
