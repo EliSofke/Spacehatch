@@ -218,19 +218,38 @@ function sysStatusColor(s) {
 function renderSysinfo() {
   if (!els.sysinfo) return;
   const d = new Date();
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  const status = ((els.status && els.status.textContent) || "idle").trim() || "idle";
-  const name = csName || `${els.owner.value.trim()}/${els.repo.value.trim()}`.replace(/^\/$/, "") || "—";
-  const CY = "#7dcfff", DIM = "#4a5060", FG = "#c8ccd4", col = sysStatusColor(status);
-  const sep = `<span style="color:${DIM}"> · </span>`;
-  els.sysinfo.innerHTML =
-    `<span style="color:${CY}">[ SH ]</span> ` +
-    `<span style="color:${CY}">${hh}:${mm}</span>` + sep +
-    `<span style="color:${FG}">${esc(name)}</span>` + sep +
-    `<span style="color:${col}">●</span> <span style="color:${col}">${esc(status)}</span>`;
+  const clock = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const status = ((els.status && els.status.textContent) || "").trim();
+  const owner = els.owner.value.trim(), repo = els.repo.value.trim();
+  const ver = versionInfo && versionInfo.version ? `v${versionInfo.version}` : "";
+  const CY = "#7dcfff", DIM = "#4a5060", col = sysStatusColor(status || "idle");
+  const A = (href, text, color) =>
+    `<a href="${href}" target="_blank" rel="noopener" style="color:${color || CY}">${esc(text)}</a>`;
+  const dim = (t) => `<span style="color:${DIM}">${t}</span>`;
+
+  // Target: each meaningful object is a link — user, repository, codespace.
+  let target = "";
+  if (owner && repo) {
+    const ownerUrl = `https://github.com/${encodeURIComponent(owner)}`;
+    target = A(ownerUrl, owner) + dim("/") + A(`${ownerUrl}/${encodeURIComponent(repo)}`, repo);
+    if (csName) target += dim("@") + A(`https://github.com/codespaces/${encodeURIComponent(csName)}`, csName);
+  }
+  // Status verb: "connected to <target>", else the raw transitional status.
+  let verb = "";
+  if (/connected/i.test(status)) verb = "connected to";
+  else if (status && !/^idle$/i.test(status)) verb = status;
+
+  const appUrl = `https://github.com/${encodeURIComponent(owner || "EliSofke")}/${encodeURIComponent(repo || "Spacehatch")}`;
+  const left = dim("[&gt;") + " " + A(appUrl, "SpaceHatch")
+    + (ver ? " " + dim(esc(ver)) : "")
+    + (verb ? `  <span style="color:${col}">${esc(verb)}</span>` : "")
+    + (target ? " " + target : "");
+  const right = `<span style="color:${CY}">${clock}</span> ` + dim("&lt;]");
+
+  els.sysinfo.innerHTML = `<span class="grp">${left}</span><span class="fill"></span><span class="grp">${right}</span>`;
 }
 function startSysinfo() {
+  loadVersion().then(renderSysinfo).catch(() => {});
   renderSysinfo();
   if (!sysTimer) sysTimer = window.setInterval(renderSysinfo, 1000);
 }
@@ -398,18 +417,6 @@ async function connect() {
   startSysinfo();
 
   ensureTerm();
-  // neofetch-style header: cyan logo on the left, three attributes. Version and
-  // commit come from version.json (generated at deploy).
-  const v = await loadVersion();
-  const CY = "\x1b[36m", CB = "\x1b[1;36m", D = "\x1b[90m", RS = "\x1b[0m";
-  let ver = "";
-  if (v.version) ver += `${CY}v${v.version}${RS}`;
-  if (v.commit) ver += `${ver ? " " : ""}${D}(${v.commit})${RS}`;
-  const lbl = (s) => `${CB}${s.padEnd(10)}${RS}`;
-  term.writeln(`${CY}/------\\${RS}   ${CB}SpaceHatch${RS} ${ver}`);
-  term.writeln(`${CY}[> SH <]${RS}   ${lbl("Terminal")}Xterm.js`);
-  term.writeln(`${CY}\\------/${RS}   ${lbl("Target")}${owner}/${repo}`);
-  term.writeln("");
 
   try {
     setStatus("launching …");
