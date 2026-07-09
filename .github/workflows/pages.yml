@@ -4,9 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "frontend-gh-wasm/**"
       - "frontend-ssh-wasm/**"
-      - "gh-wasm-src/**"
       - "ssh-wasm-src/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
@@ -32,15 +30,12 @@ jobs:
         with:
           go-version-file: ssh-wasm-src/go.mod
           cache-dependency-path: ssh-wasm-src/go.sum
-      - name: Build gh.wasm (unmodified go-gh -> GOOS=js)
-        run: bash gh-wasm-src/build.sh
       - name: Build spacehatch-ssh.wasm (dev-tunnels + grpc-go + x/crypto/ssh -> GOOS=js)
         run: bash ssh-wasm-src/build.sh
-      - name: Assemble Pages site (Go-transport SSH at /, gh terminal at /gh)
+      - name: Assemble Pages site
         run: |
-          rm -rf _site && mkdir -p _site/gh
+          rm -rf _site && mkdir -p _site
           cp -r frontend-ssh-wasm/. _site/
-          cp -r frontend-gh-wasm/. _site/gh/
           echo "site tree:"; find _site -maxdepth 2 -type f | sort
       - name: Write build metadata (version.json)
         run: |
