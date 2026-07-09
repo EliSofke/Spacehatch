@@ -68,20 +68,25 @@ async function launch(owner, repo) {
   const usable = codespaces.filter((c) => c.state !== "Deleted");
   let cs = usable.find((c) => c.state === "Available") || usable[0];
 
+  const createCs = () => gh(`/repos/${owner}/${repo}/codespaces`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ref: "main" }),
+  });
+
   if (!cs) {
     log("no codespace — creating one …");
-    cs = await gh(`/repos/${owner}/${repo}/codespaces`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ref: "main" }),
-    });
+    cs = await createCs();
   } else if (cs.state !== "Available") {
     log(`starting codespace ${cs.name} (${cs.state}) …`);
+    let started = true;
     try {
       await gh(`/user/codespaces/${encodeURIComponent(cs.name)}/start`, { method: "POST" });
     } catch (e) {
-      log(`start not permitted (${e.message}); waiting for Available anyway`, "error");
+      started = false;
+      log(`cannot start ${cs.name} (${e.message}) — creating a fresh codespace`, "error");
     }
+    if (!started) cs = await createCs();
   }
   await poll(cs.name);
   return cs.name;
@@ -163,6 +168,11 @@ async function connect() {
     window.__sshTerm = term;
 
     setStatus("connecting …");
+    // Let the connection to the worker host settle after the preceding /tunnel
+    // request before upgrading to a WebSocket. Opening the WS in the same tick
+    // as the REST call makes some browsers (notably Firefox) fail the first
+    // upgrade — a fresh connection then succeeds.
+    await new Promise((r) => setTimeout(r, 350));
     const ws = await openRelay(relayUri, tp.connectAccessToken);
 
     // ws is guaranteed open here — wire the Go transport directly.
@@ -207,9 +217,12 @@ async function connect() {
   }
 }
 
-// Open the relay WebSocket, retrying transient early failures (the tunnel host
-// may still be attaching to the relay right after the codespace becomes ready).
-function openRelay(relayUri, token, tries = 4) {
+// Open the relay WebSocket. Some browsers (notably Firefox) fail the very first
+// upgrade when it immediately follows a same-host HTTPS request; a retry on a
+// fresh connection succeeds. Retry the first couple of times quickly and
+// silently, and only surface a message if it keeps failing.
+function openRelay(relayUri, token, tries = 6) {
+  const delayFor = (n) => (n <= 2 ? 200 : 500 * (n - 1)); // 200, 200, 1000, 1500 …
   const attempt = (n) => new Promise((resolve, reject) => {
     const ws = new WebSocket(relayUri, ["tunnel-relay-client", token]);
     ws.binaryType = "arraybuffer";
@@ -222,8 +235,8 @@ function openRelay(relayUri, token, tries = 4) {
       if (ok) { resolve(ws); return; }
       try { ws.close(); } catch (_) { /* noop */ }
       if (n < tries) {
-        log(`relay attempt ${n} failed — retrying …`, "error");
-        setTimeout(() => attempt(n + 1).then(resolve, reject), 600 * n);
+        if (n >= 3) log(`relay still connecting (attempt ${n}) …`);
+        setTimeout(() => attempt(n + 1).then(resolve, reject), delayFor(n));
       } else {
         reject(new Error("relay websocket did not open after retries"));
       }
