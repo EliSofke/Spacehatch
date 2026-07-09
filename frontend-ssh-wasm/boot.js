@@ -261,30 +261,43 @@ async function poll(name, want = "Available", tries = 120, delayMs = 2000) {
   throw new Error(`codespace did not reach ${want} in time`);
 }
 
-// Find an existing usable codespace, else start/create one, then wait Available.
+// Codespace states that cannot be reused (must create a fresh one) and states
+// that are stopped and need an explicit /start. Everything else that is not yet
+// "Available" is transitional (heading toward Available) — we just wait for it.
+const CS_DEAD = new Set(["Deleted", "Failed", "Moved", "Archived"]);
+const CS_STOPPED = new Set(["Shutdown", "Unavailable", "ShuttingDown"]);
+
+// Reuse an existing codespace whenever one exists; only create when there is
+// genuinely none. Never spawn a second codespace just because an existing one is
+// stopped or mid-transition — that was the old bug (a failing /start on a
+// transitional codespace fell through to create).
 async function launch(owner, repo) {
   const { codespaces = [] } = await gh(`/repos/${owner}/${repo}/codespaces`);
-  const usable = codespaces.filter((c) => c.state !== "Deleted");
-  let cs = usable.find((c) => c.state === "Available") || usable[0];
-
-  const createCs = () => gh(`/repos/${owner}/${repo}/codespaces`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ref: "main" }),
-  });
+  const reusable = codespaces.filter((c) => !CS_DEAD.has(c.state));
+  // Prefer already-running, then one already transitioning toward Available,
+  // then a stopped one we can start.
+  let cs = reusable.find((c) => c.state === "Available")
+        || reusable.find((c) => !CS_STOPPED.has(c.state))
+        || reusable[0];
 
   if (!cs) {
     stepStart("Creating codespace");
-    cs = await createCs();
+    cs = await gh(`/repos/${owner}/${repo}/codespaces`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ref: "main" }),
+    });
   } else if (cs.state !== "Available") {
     stepStart("Starting codespace");
-    let started = true;
-    try {
-      await gh(`/user/codespaces/${encodeURIComponent(cs.name)}/start`, { method: "POST" });
-    } catch (e) {
-      started = false;
+    if (CS_STOPPED.has(cs.state)) {
+      // Stopped → ask it to start. A 409 ("already starting") is fine: poll will
+      // pick it up. Any other error also falls through to poll rather than
+      // creating a duplicate; poll surfaces a genuine failure.
+      try {
+        await gh(`/user/codespaces/${encodeURIComponent(cs.name)}/start`, { method: "POST" });
+      } catch (_) { /* already starting / transient — let poll decide */ }
     }
-    if (!started) { stepStart("Creating codespace"); cs = await createCs(); }
+    // else: transitional (Starting/Provisioning/Queued/…) — just wait.
   }
   await poll(cs.name);
   return cs.name;
