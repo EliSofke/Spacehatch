@@ -279,11 +279,8 @@ async function gh(path, opts = {}) {
   return r.status === 204 ? {} : r.json();
 }
 
-function stateTopic(state) {
-  if (state === "Provisioning") return "Provisioning codespace";
-  if (state === "Starting") return "Starting codespace";
-  if (state === "Queued" || state === "Awaiting") return "Waiting for codespace";
-  return `Waiting for codespace (${state})`;
+function stateTopic(_state) {
+  return "Waiting for codespace to start";
 }
 
 async function poll(name, want = "Available", tries = 120, delayMs = 2000) {
