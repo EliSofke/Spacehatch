@@ -43,22 +43,33 @@ function ensureTerm() {
   fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(els.term);
-  // Held-key auto-repeat floods the networked PTY: a burst of Enter makes the
-  // remote shell echo accepted empty lines while coalescing prompt redraws,
-  // leaving blank lines. Drop Enter auto-repeat (holding Enter = one submit) and
-  // throttle other held keys; distinct keystrokes and paste are untouched.
-  let lastRepeat = 0;
-  term.attachCustomKeyEventHandler((e) => {
-    if (e.type !== "keydown" || !e.repeat) return true;
-    if (e.key === "Enter") return false;
-    const now = performance.now();
-    if (now - lastRepeat < 60) return false; // ~16 repeats/sec for other keys
-    lastRepeat = now;
-    return true;
-  });
+  loadRenderer(term);
   fit.fit();
   window.__sshTerm = term;
   return term;
+}
+
+// Prefer an accelerated renderer (WebGL, then Canvas) over xterm's default DOM
+// renderer. The DOM renderer can accumulate sub-pixel row rounding and leave
+// visual gaps (apparent blank lines) between rows after scrolling on some
+// browsers; the logical buffer is unaffected, so this is purely a rendering fix.
+// Must run after term.open().
+function loadRenderer(t) {
+  if (typeof WebglAddon !== "undefined" && WebglAddon.WebglAddon) {
+    try {
+      const webgl = new WebglAddon.WebglAddon();
+      webgl.onContextLoss(() => { try { webgl.dispose(); } catch (_) { /* noop */ } loadCanvas(t); });
+      t.loadAddon(webgl);
+      return;
+    } catch (_) { /* WebGL unavailable — fall back to Canvas */ }
+  }
+  loadCanvas(t);
+}
+
+function loadCanvas(t) {
+  if (typeof CanvasAddon !== "undefined" && CanvasAddon.CanvasAddon) {
+    try { t.loadAddon(new CanvasAddon.CanvasAddon()); } catch (_) { /* DOM fallback */ }
+  }
 }
 
 function tstamp() {
