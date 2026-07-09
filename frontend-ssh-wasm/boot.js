@@ -54,47 +54,52 @@ function tstamp() {
   return `\x1b[90m[${s.padStart(11)}]\x1b[0m`;
 }
 
-// A yellow-orange braille spinner that animates in place at the end of a single
-// fixed boot line — no elapsed timer, and no new lines while waiting — so the
-// spinner stays put, e.g. "[   2.757000] codespace: Provisioning ⣾".
+// Each boot line is one step: "[time since boot] [ <status> ] <active topic>",
+// where <status> spins (yellow-orange braille) while the step runs and flips to
+// OK (green) or FAIL (red) in place when it ends. Topics are written actively
+// ("Provisioning codespace", "Attaching tunnel host", …). One step at a time;
+// starting a new step completes the previous one as OK.
 const SPIN_FRAMES = "⣾⣽⣻⢿⡿⣟⣯⣷";
-let spinTimer = 0, spinPrefix = "", spinFrame = 0;
+let stepTimer = 0, stepTopic = "", stepTs = "", stepFrame = 0, stepActive = false;
 
-function drawSpin() {
-  if (!term) return;
-  const g = SPIN_FRAMES[spinFrame % SPIN_FRAMES.length];
-  term.write(`\r\x1b[K${spinPrefix} \x1b[38;5;214m${g}\x1b[0m`);
-}
-// Begin a spinning line "[ts] text ⣾" with a fixed timestamp; only the glyph cycles.
-function startSpin(text) {
-  if (!term) return;
-  finalizeSpin();
-  spinPrefix = `${tstamp()} ${text}`;
-  spinFrame = 0;
-  drawSpin();
-  spinTimer = setInterval(() => { spinFrame++; drawSpin(); }, 120);
-}
-// Freeze the current spinning line into a permanent line (glyph removed).
-function finalizeSpin() {
-  if (spinTimer) { clearInterval(spinTimer); spinTimer = 0; }
-  if (term && spinPrefix) { term.write("\r\x1b[K"); term.writeln(spinPrefix); spinPrefix = ""; }
-}
+const TAG_OK = "[ \x1b[32mOK\x1b[0m ]";
+const TAG_FAIL = "[\x1b[31mFAIL\x1b[0m]";
+function tagSpin() { return `[ \x1b[38;5;214m${SPIN_FRAMES[stepFrame % SPIN_FRAMES.length]}\x1b[0m  ]`; }
 
-// One boot line. level: undefined | "ok" | "warn" | "error".
-function boot(msg, level) {
-  if (!term) return;
-  if (spinTimer || spinPrefix) finalizeSpin(); // close any spinning line first
-  let tag = "";
-  if (level === "ok") tag = "\x1b[32m[  OK  ]\x1b[0m ";
-  else if (level === "warn") tag = "\x1b[33m[ WARN ]\x1b[0m ";
-  else if (level === "error") tag = "\x1b[31m[FAILED]\x1b[0m ";
-  const body = level === "error" ? `\x1b[31m${msg}\x1b[0m` : msg;
-  term.writeln(`${tstamp()} ${tag}${body}`);
-}
+function drawStep(tag) { if (term) term.write(`\r\x1b[K${stepTs} ${tag} ${stepTopic}`); }
 
-// Backwards-compatible alias used by the retry logic below.
-function log(msg, cls) { boot(msg, cls === "error" ? "error" : undefined); }
+function stepStart(topic) {
+  if (!term) return;
+  if (stepActive) stepOK();
+  stepActive = true;
+  stepTopic = topic;
+  stepTs = tstamp();
+  stepFrame = 0;
+  drawStep(tagSpin());
+  stepTimer = setInterval(() => { stepFrame++; drawStep(tagSpin()); }, 120);
+}
+function stepFinish(tag) {
+  if (stepTimer) { clearInterval(stepTimer); stepTimer = 0; }
+  if (!term || !stepActive) return;
+  drawStep(tag);
+  term.writeln("");
+  stepActive = false;
+}
+function stepOK() { stepFinish(TAG_OK); }
+function stepFail() { stepFinish(TAG_FAIL); }
+// Error detail printed under a failed step.
+function detail(msg) { if (term) term.writeln(`               \x1b[31m${msg}\x1b[0m`); }
+
 function setStatus(s) { if (els.status) els.status.textContent = s; }
+
+// Map the Go transport's status pings to active-voice step topics.
+function goTopic(s) {
+  if (/relay: SSH session/.test(s)) return "Opening relay session";
+  if (/generating key/.test(s)) return "Generating SSH key";
+  if (/StartRemoteServer/.test(s)) return "Starting remote SSH server";
+  if (/connecting shell/.test(s)) return "Connecting shell";
+  return s.replace(/\s*…\s*$/, "");
+}
 
 // ---- GitHub REST ----------------------------------------------------------
 async function gh(path, opts = {}) {
@@ -113,25 +118,27 @@ async function gh(path, opts = {}) {
   return r.status === 204 ? {} : r.json();
 }
 
+function stateTopic(state) {
+  if (state === "Provisioning") return "Provisioning codespace";
+  if (state === "Starting") return "Starting codespace";
+  if (state === "Queued" || state === "Awaiting") return "Waiting for codespace";
+  return `Waiting for codespace (${state})`;
+}
+
 async function poll(name, want = "Available", tries = 120, delayMs = 2000) {
   let shown = "";
-  try {
-    for (let i = 0; i < tries; i++) {
-      const cs = await gh(`/user/codespaces/${encodeURIComponent(name)}`);
-      if (cs.state !== shown) {
-        shown = cs.state;
-        setStatus(`${cs.state} …`);
-        if (cs.state === want) boot(`codespace: ${cs.state}`);
-        else startSpin(`codespace: ${cs.state}`); // spins in place on this line
-      }
-      if (cs.state === want) return cs;
-      if (cs.state === "Failed" || cs.state === "Deleted") throw new Error(`codespace ${cs.state}`);
-      await new Promise((r) => setTimeout(r, delayMs));
+  for (let i = 0; i < tries; i++) {
+    const cs = await gh(`/user/codespaces/${encodeURIComponent(name)}`);
+    if (cs.state !== shown) {
+      shown = cs.state;
+      setStatus(`${cs.state} …`);
+      if (cs.state !== want) stepStart(stateTopic(cs.state));
     }
-    throw new Error(`codespace did not reach ${want} in time`);
-  } finally {
-    finalizeSpin();
+    if (cs.state === want) return cs;
+    if (cs.state === "Failed" || cs.state === "Deleted") throw new Error(`codespace ${cs.state}`);
+    await new Promise((r) => setTimeout(r, delayMs));
   }
+  throw new Error(`codespace did not reach ${want} in time`);
 }
 
 // Find an existing usable codespace, else start/create one, then wait Available.
@@ -147,18 +154,17 @@ async function launch(owner, repo) {
   });
 
   if (!cs) {
-    log("no codespace — creating one …");
+    stepStart("Creating codespace");
     cs = await createCs();
   } else if (cs.state !== "Available") {
-    log(`starting codespace ${cs.name} (${cs.state}) …`);
+    stepStart("Starting codespace");
     let started = true;
     try {
       await gh(`/user/codespaces/${encodeURIComponent(cs.name)}/start`, { method: "POST" });
     } catch (e) {
       started = false;
-      log(`cannot start ${cs.name} (${e.message}) — creating a fresh codespace`, "error");
     }
-    if (!started) cs = await createCs();
+    if (!started) { stepStart("Creating codespace"); cs = await createCs(); }
   }
   await poll(cs.name);
   return cs.name;
@@ -204,57 +210,52 @@ async function connect() {
 
   try {
     setStatus("launching …");
-    boot("POST: locating codespace …");
+    stepStart("Locating codespace");
     const name = await launch(owner, repo);
-    boot(`codespace ready: ${name}`, "ok");
 
+    stepStart("Resolving tunnel");
     const tp = await tunnelProps(name);
-    boot(`tunnel: cluster=${tp.clusterId} id=${tp.tunnelId}`);
 
-    // Poll /tunnel until the codespace's tunnel host has attached to the relay.
     // GitHub reports the codespace "Available" a few seconds before its tunnel
-    // host connects; opening the relay WebSocket in that window hits a host-less
-    // tunnel and the relay rejects it (close 1006). status.hostConnectionCount
-    // (passed through by the worker) is the precise readiness signal.
+    // host attaches to the relay; opening the relay WebSocket in that window
+    // hits a host-less tunnel and the relay rejects it (close 1006).
+    // status.hostConnectionCount (passed through by the worker) is the signal.
     setStatus("waiting for tunnel host …");
-    startSpin("relay: waiting for tunnel host …");
+    stepStart("Attaching tunnel host");
     let relayUri;
-    try {
-      for (let i = 0; ; i++) {
-        const relayRes = await fetch(`${WORKER_URL}/tunnel`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cluster: tp.clusterId, tunnelId: tp.tunnelId, token: tp.connectAccessToken }),
-        });
-        if (!relayRes.ok) throw new Error(`/tunnel ${relayRes.status} ${await relayRes.text()}`);
-        const tunnel = await relayRes.json();
-        relayUri = tunnel.endpoints && tunnel.endpoints[0] && tunnel.endpoints[0].clientRelayUri;
-        if (!relayUri) throw new Error("no clientRelayUri from /tunnel");
-        const hostUp = ((tunnel.status && tunnel.status.hostConnectionCount) || 0) >= 1;
-        if (hostUp) { boot(`tunnel host attached${i ? ` (after ${i} check${i > 1 ? "s" : ""})` : ""}`, "ok"); break; }
-        if (i >= 40) { boot("tunnel host not reported ready — trying anyway", "warn"); break; }
-        await new Promise((r) => setTimeout(r, 750));
-      }
-    } finally {
-      finalizeSpin();
+    for (let i = 0; ; i++) {
+      const relayRes = await fetch(`${WORKER_URL}/tunnel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cluster: tp.clusterId, tunnelId: tp.tunnelId, token: tp.connectAccessToken }),
+      });
+      if (!relayRes.ok) throw new Error(`/tunnel ${relayRes.status} ${await relayRes.text()}`);
+      const tunnel = await relayRes.json();
+      relayUri = tunnel.endpoints && tunnel.endpoints[0] && tunnel.endpoints[0].clientRelayUri;
+      if (!relayUri) throw new Error("no clientRelayUri from /tunnel");
+      const hostUp = ((tunnel.status && tunnel.status.hostConnectionCount) || 0) >= 1;
+      if (hostUp || i >= 40) break;
+      await new Promise((r) => setTimeout(r, 750));
     }
 
+    stepStart("Loading Go/WASM transport");
     await loadGo();
-    boot("transport: Go/WASM module ready");
 
     setStatus("connecting …");
-    // Let the connection to the worker host settle after the preceding /tunnel
-    // request before upgrading to a WebSocket. Opening the WS in the same tick
-    // as the REST call makes some browsers (notably Firefox) fail the first
-    // upgrade — a fresh connection then succeeds.
+    stepStart("Connecting to relay");
+    // Let the connection to the worker host settle before the WS upgrade (some
+    // browsers fail the first upgrade right after a same-host HTTPS request).
     await new Promise((r) => setTimeout(r, 350));
     const ws = await openRelay(relayUri, tp.connectAccessToken);
 
-    // ws is guaranteed open here — wire the Go transport directly.
+    // ws is open — wire the Go transport; its status pings drive the next steps.
     const handle = window.spacehatchSSHConnect({
       sink: (u8) => { try { ws.send(u8); } catch (_) { /* closed */ } },
       onData: (u8) => term.write(typeof u8 === "string" ? u8 : new Uint8Array(u8)),
-      onStatus: (s) => boot(s, /connected|sshd on port/.test(s) ? "ok" : undefined),
+      onStatus: (s) => {
+        if (/(…|\.\.\.)\s*$/.test(s)) stepStart(goTopic(s));
+        else if (/connected\s*$/.test(s) && stepActive) stepOK();
+      },
       workerUrl: WORKER_URL,
       cluster: tp.clusterId,
       tunnelId: tp.tunnelId,
@@ -263,15 +264,13 @@ async function connect() {
       rows: term.rows,
     });
     ws.onmessage = (e) => handle.push(new Uint8Array(e.data));
-    ws.onerror = () => boot("relay websocket error", "error");
-    ws.onclose = (e) => { if (e.code !== 1000) boot(`relay closed (code ${e.code})`, "error"); };
+    ws.onerror = () => { /* failure surfaces via the connect promise / close */ };
+    ws.onclose = () => { /* handled by the connect promise */ };
     handle.promise.then((shell) => {
+      if (stepActive) stepOK();
       term.writeln("\x1b[90m" + "-".repeat(72) + "\x1b[0m");
       term.focus();
       term.onData((d) => shell.write(d));
-      // Only forward a resize when the size actually changed, and debounce the
-      // window-resize -> fit cascade. Each resize is a SIGWINCH that makes the
-      // remote shell redraw its prompt; a burst produced dozens of blank prompts.
       let lastCols = term.cols, lastRows = term.rows;
       term.onResize(({ cols, rows }) => {
         if (cols === lastCols && rows === lastRows) return;
@@ -284,10 +283,11 @@ async function connect() {
         fitTimer = setTimeout(() => fit.fit(), 150);
       });
       setStatus("connected");
-    }).catch((err) => { setStatus("failed"); boot(`connect failed: ${err}`, "error"); });
+    }).catch((err) => { if (stepActive) stepFail(); detail(String(err)); setStatus("failed"); });
   } catch (e) {
+    if (stepActive) stepFail();
+    detail(String(e && e.message ? e.message : e));
     setStatus("error");
-    boot(String(e && e.message ? e.message : e), "error");
   } finally {
     els.connect.disabled = false;
   }
@@ -311,7 +311,6 @@ function openRelay(relayUri, token, tries = 6) {
       if (ok) { resolve(ws); return; }
       try { ws.close(); } catch (_) { /* noop */ }
       if (n < tries) {
-        if (n >= 3) log(`relay still connecting (attempt ${n}) …`);
         setTimeout(() => attempt(n + 1).then(resolve, reject), delayFor(n));
       } else {
         reject(new Error("relay websocket did not open after retries"));
