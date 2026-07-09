@@ -19,6 +19,7 @@ const els = {
   status: /** @type {HTMLElement} */ (document.getElementById("status")),
   term: /** @type {HTMLElement} */ (document.getElementById("term")),
   rtt: /** @type {HTMLElement} */ (document.getElementById("rtt")),
+  sysinfo: /** @type {HTMLElement} */ (document.getElementById("sysinfo")),
 };
 
 const params = new URLSearchParams(location.search);
@@ -196,7 +197,40 @@ function stepFail() { stepFinish(TAG_FAIL); }
 // Error detail printed under a failed step.
 function detail(msg) { if (term) term.writeln(`               \x1b[31m${msg}\x1b[0m`); }
 
-function setStatus(s) { if (els.status) els.status.textContent = s; }
+function setStatus(s) { if (els.status) els.status.textContent = s; renderSysinfo(); }
+
+// System-info line above the terminal, in the terminal aesthetic: the [ SH ]
+// motif, a 24-hour HH:MM clock, the container (codespace) name, and its status.
+// The clock is local and ticks every second; the status is push-driven — the Go
+// transport reports it via onStatus (relayed through setStatus), so no polling is
+// needed for it. GitHub exposes no push/subscribe for the codespace state itself.
+let csName = "", sysTimer = 0;
+const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+function sysStatusColor(s) {
+  if (/connected/i.test(s)) return "#6ac26a";
+  if (/fail|error/i.test(s)) return "#e06c6c";
+  if (/…|\.\.\.|connect|launch|start|wait|provision|resolv|attach|load|queue|available/i.test(s)) return "#e0b341";
+  return "#6a7080";
+}
+function renderSysinfo() {
+  if (!els.sysinfo) return;
+  const d = new Date();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const status = ((els.status && els.status.textContent) || "idle").trim() || "idle";
+  const name = csName || `${els.owner.value.trim()}/${els.repo.value.trim()}`.replace(/^\/$/, "") || "—";
+  const CY = "#7dcfff", DIM = "#4a5060", FG = "#c8ccd4", col = sysStatusColor(status);
+  const sep = `<span style="color:${DIM}"> · </span>`;
+  els.sysinfo.innerHTML =
+    `<span style="color:${CY}">[ SH ]</span> ` +
+    `<span style="color:${CY}">${hh}:${mm}</span>` + sep +
+    `<span style="color:${FG}">${esc(name)}</span>` + sep +
+    `<span style="color:${col}">●</span> <span style="color:${col}">${esc(status)}</span>`;
+}
+function startSysinfo() {
+  renderSysinfo();
+  if (!sysTimer) sysTimer = window.setInterval(renderSysinfo, 1000);
+}
 
 // Live latency readout. Keeps a light EWMA to smooth jitter and colour-codes the
 // value (green ≤ 80 ms, amber ≤ 200 ms, red beyond). This is the measurement
@@ -341,6 +375,7 @@ async function connect() {
   const repo = els.repo.value.trim();
   if (!owner || !repo) { setStatus("enter owner and repo"); return; }
   els.connect.disabled = true;
+  startSysinfo();
 
   ensureTerm();
   // neofetch-style header: cyan logo on the left, three attributes. Version and
@@ -360,6 +395,7 @@ async function connect() {
     setStatus("launching …");
     stepStart("Locating codespace");
     const name = await launch(owner, repo);
+    csName = name; renderSysinfo();
 
     stepStart("Resolving tunnel");
     const tp = await tunnelProps(name);

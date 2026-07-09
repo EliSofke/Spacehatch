@@ -16,6 +16,8 @@
     button { background: #7aa2f7; color: #0b0e14; border: 0; border-radius: 6px; padding: 7px 14px; font: inherit; font-weight: 600; cursor: pointer; }
     button:disabled { opacity: .5; cursor: default; }
     #term { flex: 1 1 auto; min-height: 0; padding: 6px 2px 4px; display: flex; justify-content: center; }
+    #sysinfo { font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 4px 16px; letter-spacing: .3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-top: 1px solid #161b26; }
+    #sysinfo:empty { display: none; }
     #rtt { font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: #6ac26a; border: 1px solid #6ac26a; border-radius: 5px; padding: 1px 6px; letter-spacing: .3px; }
     #rtt:empty { display: none; }
   </style>
@@ -32,6 +34,7 @@
     <span id="status"></span>
     <span id="rtt"></span>
   </div>
+  <div id="sysinfo"></div>
   <div id="term"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
