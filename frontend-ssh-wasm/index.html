@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
   <style>
     :root { color-scheme: dark; }
-    body { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #0b0e14; color: #d7dae0; }
+    body { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #0b0e14; color: #d7dae0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
     header { padding: 10px 14px; background: #11151f; border-bottom: 1px solid #222; }
     header b { color: #7aa2f7; }
     .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 10px 14px; }
@@ -15,9 +15,7 @@
     input#token { flex: 1 1 320px; }
     button { background: #7aa2f7; color: #0b0e14; border: 0; border-radius: 6px; padding: 7px 14px; font: inherit; font-weight: 600; cursor: pointer; }
     button:disabled { opacity: .5; cursor: default; }
-    #term { height: 62vh; padding: 6px 10px; }
-    #log { max-height: 22vh; overflow: auto; padding: 6px 14px; font-size: 12px; color: #9aa0ac; border-top: 1px solid #222; white-space: pre-wrap; }
-    #log .error { color: #f7768e; }
+    #term { flex: 1 1 auto; min-height: 0; padding: 6px 10px 10px; }
   </style>
 </head>
 <body>
@@ -32,7 +30,6 @@
     <span id="status"></span>
   </div>
   <div id="term"></div>
-  <div id="log"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>

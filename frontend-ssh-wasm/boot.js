@@ -18,21 +18,56 @@ const els = {
   connect: /** @type {HTMLButtonElement} */ (document.getElementById("connect")),
   status: /** @type {HTMLElement} */ (document.getElementById("status")),
   term: /** @type {HTMLElement} */ (document.getElementById("term")),
-  log: /** @type {HTMLElement} */ (document.getElementById("log")),
 };
 
 const params = new URLSearchParams(location.search);
 els.owner.value = params.get("owner") || cfg.owner || "";
 els.repo.value = params.get("repo") || cfg.repo || "";
 
-function log(msg, cls) {
-  const line = document.createElement("div");
-  if (cls) line.className = cls;
-  line.textContent = msg;
-  els.log.appendChild(line);
-  els.log.scrollTop = els.log.scrollHeight;
+// ---- the main terminal doubles as the boot console ------------------------
+// Diagnostics print into the terminal like a Linux boot (kernel timestamps +
+// [  OK  ] tags), then the codespace shell takes over in the same window.
+let term = null, fit = null, bootT0 = 0;
+
+function ensureTerm() {
+  if (term) { try { term.dispose(); } catch (_) { /* noop */ } els.term.innerHTML = ""; term = null; }
+  bootT0 = performance.now();
+  // eslint-disable-next-line no-undef
+  term = new Terminal({
+    fontSize: 13,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    cursorBlink: true,
+    convertEol: true,
+    theme: { background: "#0b0e14", foreground: "#d7dae0" },
+  });
+  // eslint-disable-next-line no-undef
+  fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(els.term);
+  fit.fit();
+  window.__sshTerm = term;
+  return term;
 }
-function setStatus(s) { els.status.textContent = s; }
+
+function tstamp() {
+  const s = ((performance.now() - bootT0) / 1000).toFixed(6);
+  return `\x1b[90m[${s.padStart(11)}]\x1b[0m`;
+}
+
+// One boot line. level: undefined | "ok" | "warn" | "error".
+function boot(msg, level) {
+  if (!term) return;
+  let tag = "";
+  if (level === "ok") tag = "\x1b[32m[  OK  ]\x1b[0m ";
+  else if (level === "warn") tag = "\x1b[33m[ WARN ]\x1b[0m ";
+  else if (level === "error") tag = "\x1b[31m[FAILED]\x1b[0m ";
+  const body = level === "error" ? `\x1b[31m${msg}\x1b[0m` : msg;
+  term.writeln(`${tstamp()} ${tag}${body}`);
+}
+
+// Backwards-compatible alias used by the retry logic below.
+function log(msg, cls) { boot(msg, cls === "error" ? "error" : undefined); }
+function setStatus(s) { if (els.status) els.status.textContent = s; }
 
 // ---- GitHub REST ----------------------------------------------------------
 async function gh(path, opts = {}) {
@@ -52,9 +87,10 @@ async function gh(path, opts = {}) {
 }
 
 async function poll(name, want = "Available", tries = 60, delayMs = 3000) {
+  let last = "";
   for (let i = 0; i < tries; i++) {
     const cs = await gh(`/user/codespaces/${encodeURIComponent(name)}`);
-    setStatus(`codespace ${cs.state} …`);
+    if (cs.state !== last) { boot(`codespace: ${cs.state}`); setStatus(`${cs.state} …`); last = cs.state; }
     if (cs.state === want) return cs;
     if (cs.state === "Failed" || cs.state === "Deleted") throw new Error(`codespace ${cs.state}`);
     await new Promise((r) => setTimeout(r, delayMs));
@@ -125,13 +161,19 @@ async function connect() {
   const repo = els.repo.value.trim();
   if (!owner || !repo) { setStatus("enter owner and repo"); return; }
   els.connect.disabled = true;
+
+  ensureTerm();
+  term.writeln("\x1b[1;36mSpacehatch\x1b[0m SSH \x1b[90m— codespace over one Go/WASM transport (dev-tunnels + grpc-go + x/crypto/ssh)\x1b[0m");
+  term.writeln("\x1b[90m" + "-".repeat(72) + "\x1b[0m");
+
   try {
     setStatus("launching …");
+    boot("POST: locating codespace …");
     const name = await launch(owner, repo);
-    log(`codespace ready: ${name}`);
+    boot(`codespace ready: ${name}`, "ok");
 
     const tp = await tunnelProps(name);
-    log(`tunnelProperties: cluster=${tp.clusterId} id=${tp.tunnelId}`);
+    boot(`tunnel: cluster=${tp.clusterId} id=${tp.tunnelId}`);
 
     // Poll /tunnel until the codespace's tunnel host has attached to the relay.
     // GitHub reports the codespace "Available" a few seconds before its tunnel
@@ -139,6 +181,7 @@ async function connect() {
     // tunnel and the relay rejects it (close 1006). status.hostConnectionCount
     // (passed through by the worker) is the precise readiness signal.
     setStatus("waiting for tunnel host …");
+    boot("relay: waiting for tunnel host to attach …");
     let relayUri;
     for (let i = 0; ; i++) {
       const relayRes = await fetch(`${WORKER_URL}/tunnel`, {
@@ -151,21 +194,13 @@ async function connect() {
       relayUri = tunnel.endpoints && tunnel.endpoints[0] && tunnel.endpoints[0].clientRelayUri;
       if (!relayUri) throw new Error("no clientRelayUri from /tunnel");
       const hostUp = ((tunnel.status && tunnel.status.hostConnectionCount) || 0) >= 1;
-      if (hostUp) { if (i) log(`tunnel host attached after ${i} check(s)`); break; }
-      if (i >= 40) { log("tunnel host not reported ready — trying anyway", "error"); break; }
+      if (hostUp) { boot(`tunnel host attached${i ? ` (after ${i} check${i > 1 ? "s" : ""})` : ""}`, "ok"); break; }
+      if (i >= 40) { boot("tunnel host not reported ready — trying anyway", "warn"); break; }
       await new Promise((r) => setTimeout(r, 750));
     }
 
     await loadGo();
-
-    // eslint-disable-next-line no-undef
-    const term = new Terminal({ fontSize: 13, theme: { background: "#0b0e14" }, cursorBlink: true });
-    // eslint-disable-next-line no-undef
-    const fit = new FitAddon.FitAddon();
-    term.loadAddon(fit);
-    term.open(els.term);
-    fit.fit();
-    window.__sshTerm = term;
+    boot("transport: Go/WASM module ready");
 
     setStatus("connecting …");
     // Let the connection to the worker host settle after the preceding /tunnel
@@ -179,7 +214,7 @@ async function connect() {
     const handle = window.spacehatchSSHConnect({
       sink: (u8) => { try { ws.send(u8); } catch (_) { /* closed */ } },
       onData: (u8) => term.write(typeof u8 === "string" ? u8 : new Uint8Array(u8)),
-      onStatus: (s) => log(s),
+      onStatus: (s) => boot(s, /connected|sshd on port/.test(s) ? "ok" : undefined),
       workerUrl: WORKER_URL,
       cluster: tp.clusterId,
       tunnelId: tp.tunnelId,
@@ -188,9 +223,11 @@ async function connect() {
       rows: term.rows,
     });
     ws.onmessage = (e) => handle.push(new Uint8Array(e.data));
-    ws.onerror = () => log("relay websocket error", "error");
-    ws.onclose = (e) => log(`relay closed (code ${e.code})`, e.code === 1000 ? undefined : "error");
+    ws.onerror = () => boot("relay websocket error", "error");
+    ws.onclose = (e) => { if (e.code !== 1000) boot(`relay closed (code ${e.code})`, "error"); };
     handle.promise.then((shell) => {
+      term.writeln("\x1b[90m" + "-".repeat(72) + "\x1b[0m");
+      term.focus();
       term.onData((d) => shell.write(d));
       // Only forward a resize when the size actually changed, and debounce the
       // window-resize -> fit cascade. Each resize is a SIGWINCH that makes the
@@ -207,11 +244,10 @@ async function connect() {
         fitTimer = setTimeout(() => fit.fit(), 150);
       });
       setStatus("connected");
-      log("shell connected");
-    }).catch((err) => { setStatus("failed"); log(`connect failed: ${err}`, "error"); });
+    }).catch((err) => { setStatus("failed"); boot(`connect failed: ${err}`, "error"); });
   } catch (e) {
     setStatus("error");
-    log(String(e && e.message ? e.message : e), "error");
+    boot(String(e && e.message ? e.message : e), "error");
   } finally {
     els.connect.disabled = false;
   }
