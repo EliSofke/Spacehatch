@@ -54,6 +54,30 @@ function tstamp() {
   return `\x1b[90m[${s.padStart(11)}]\x1b[0m`;
 }
 
+// A yellow-orange braille spinner pinned to the bottom line during long waits
+// (e.g. codespace provisioning). Timestamped boot lines scroll above it.
+const SPIN_FRAMES = "⣾⣽⣻⢿⡿⣟⣯⣷";
+let spinTimer = 0, spinLabel = "", spinFrame = 0, spinStart = 0;
+
+function renderSpin() {
+  if (!term) return;
+  const el = ((performance.now() - spinStart) / 1000).toFixed(0);
+  const f = SPIN_FRAMES[spinFrame % SPIN_FRAMES.length];
+  term.write(`\r\x1b[K\x1b[38;5;214m${f}\x1b[0m ${spinLabel} \x1b[90m${el}s\x1b[0m`);
+}
+function startSpinner(label) {
+  if (!term) return;
+  spinLabel = label; spinFrame = 0; spinStart = performance.now();
+  if (spinTimer) clearInterval(spinTimer);
+  renderSpin();
+  spinTimer = setInterval(() => { spinFrame++; renderSpin(); }, 120);
+}
+function updateSpinner(label) { spinLabel = label; }
+function stopSpinner() {
+  if (spinTimer) { clearInterval(spinTimer); spinTimer = 0; }
+  if (term) term.write("\r\x1b[K"); // clear the spinner line so the next line replaces it
+}
+
 // One boot line. level: undefined | "ok" | "warn" | "error".
 function boot(msg, level) {
   if (!term) return;
@@ -62,7 +86,10 @@ function boot(msg, level) {
   else if (level === "warn") tag = "\x1b[33m[ WARN ]\x1b[0m ";
   else if (level === "error") tag = "\x1b[31m[FAILED]\x1b[0m ";
   const body = level === "error" ? `\x1b[31m${msg}\x1b[0m` : msg;
+  const spinning = !!spinTimer;
+  if (spinning) term.write("\r\x1b[K");   // lift the spinner off the last line
   term.writeln(`${tstamp()} ${tag}${body}`);
+  if (spinning) renderSpin();             // re-pin the spinner to the bottom
 }
 
 // Backwards-compatible alias used by the retry logic below.
@@ -86,16 +113,21 @@ async function gh(path, opts = {}) {
   return r.status === 204 ? {} : r.json();
 }
 
-async function poll(name, want = "Available", tries = 60, delayMs = 3000) {
+async function poll(name, want = "Available", tries = 120, delayMs = 2000) {
   let last = "";
-  for (let i = 0; i < tries; i++) {
-    const cs = await gh(`/user/codespaces/${encodeURIComponent(name)}`);
-    if (cs.state !== last) { boot(`codespace: ${cs.state}`); setStatus(`${cs.state} …`); last = cs.state; }
-    if (cs.state === want) return cs;
-    if (cs.state === "Failed" || cs.state === "Deleted") throw new Error(`codespace ${cs.state}`);
-    await new Promise((r) => setTimeout(r, delayMs));
+  startSpinner("waiting for codespace …");
+  try {
+    for (let i = 0; i < tries; i++) {
+      const cs = await gh(`/user/codespaces/${encodeURIComponent(name)}`);
+      if (cs.state !== last) { boot(`codespace: ${cs.state}`); setStatus(`${cs.state} …`); last = cs.state; }
+      if (cs.state === want) return cs;
+      if (cs.state === "Failed" || cs.state === "Deleted") throw new Error(`codespace ${cs.state}`);
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+    throw new Error(`codespace did not reach ${want} in time`);
+  } finally {
+    stopSpinner();
   }
-  throw new Error(`codespace did not reach ${want} in time`);
 }
 
 // Find an existing usable codespace, else start/create one, then wait Available.
@@ -182,21 +214,26 @@ async function connect() {
     // (passed through by the worker) is the precise readiness signal.
     setStatus("waiting for tunnel host …");
     boot("relay: waiting for tunnel host to attach …");
+    startSpinner("waiting for tunnel host …");
     let relayUri;
-    for (let i = 0; ; i++) {
-      const relayRes = await fetch(`${WORKER_URL}/tunnel`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cluster: tp.clusterId, tunnelId: tp.tunnelId, token: tp.connectAccessToken }),
-      });
-      if (!relayRes.ok) throw new Error(`/tunnel ${relayRes.status} ${await relayRes.text()}`);
-      const tunnel = await relayRes.json();
-      relayUri = tunnel.endpoints && tunnel.endpoints[0] && tunnel.endpoints[0].clientRelayUri;
-      if (!relayUri) throw new Error("no clientRelayUri from /tunnel");
-      const hostUp = ((tunnel.status && tunnel.status.hostConnectionCount) || 0) >= 1;
-      if (hostUp) { boot(`tunnel host attached${i ? ` (after ${i} check${i > 1 ? "s" : ""})` : ""}`, "ok"); break; }
-      if (i >= 40) { boot("tunnel host not reported ready — trying anyway", "warn"); break; }
-      await new Promise((r) => setTimeout(r, 750));
+    try {
+      for (let i = 0; ; i++) {
+        const relayRes = await fetch(`${WORKER_URL}/tunnel`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cluster: tp.clusterId, tunnelId: tp.tunnelId, token: tp.connectAccessToken }),
+        });
+        if (!relayRes.ok) throw new Error(`/tunnel ${relayRes.status} ${await relayRes.text()}`);
+        const tunnel = await relayRes.json();
+        relayUri = tunnel.endpoints && tunnel.endpoints[0] && tunnel.endpoints[0].clientRelayUri;
+        if (!relayUri) throw new Error("no clientRelayUri from /tunnel");
+        const hostUp = ((tunnel.status && tunnel.status.hostConnectionCount) || 0) >= 1;
+        if (hostUp) { boot(`tunnel host attached${i ? ` (after ${i} check${i > 1 ? "s" : ""})` : ""}`, "ok"); break; }
+        if (i >= 40) { boot("tunnel host not reported ready — trying anyway", "warn"); break; }
+        await new Promise((r) => setTimeout(r, 750));
+      }
+    } finally {
+      stopSpinner();
     }
 
     await loadGo();
