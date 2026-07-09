@@ -28,6 +28,10 @@ els.repo.value = params.get("repo") || cfg.repo || "";
 // Diagnostics print into the terminal like a Linux boot (kernel timestamps +
 // [  OK  ] tags), then the codespace shell takes over in the same window.
 let term = null, fit = null, bootT0 = 0;
+// Echo gate for held-Enter: while an Enter is in flight (until the backend's
+// echo arrives, or a short fallback window elapses), further Enter auto-repeats
+// are held back. Cleared by the transport's onData.
+let enterGateUntil = 0;
 
 function ensureTerm() {
   if (term) { try { term.dispose(); } catch (_) { /* noop */ } els.term.innerHTML = ""; term = null; }
@@ -44,20 +48,25 @@ function ensureTerm() {
   term.loadAddon(fit);
   term.open(els.term);
   loadRenderer(term);
-  // Held-key auto-repeat floods the networked pty. Measured on the live link:
-  // the client sends clean single "\r" per repeat, but the SERVER stream then
-  // contains real blank lines — readline echoes each accepted Enter ("\r\n")
-  // immediately while the prompt redraws arrive later in groups, so echoes stack
-  // into empty lines. Identical in Chrome and Firefox because it is pty output,
-  // not rendering. Fix at the source: don't forward key auto-repeat for Enter.
-  // Returning false alone is NOT enough — xterm then skips preventDefault and the
-  // browser fires a follow-up keypress that sends the "\r" anyway. So repeats are
-  // dropped on ALL event types AND preventDefault() suppresses the keypress.
-  // Other held keys are paced to ~16/s; distinct keystrokes and paste untouched.
+  // Held-key auto-repeat over a networked pty: bursts of Enter make readline's
+  // echoes ("\r\n") stack ahead of the grouped prompt redraws — real blank
+  // lines in the SERVER stream (browser-independent). Instead of dropping the
+  // repeat entirely, gate it on the backend echo: at most ONE Enter is in
+  // flight; the next auto-repeat passes only after server data arrived (or a
+  // 400 ms fallback). Holding Enter therefore repeats at the link's natural
+  // pace and stacking is impossible. preventDefault() on gated events stops
+  // the browser's follow-up keypress from sending the "\r" anyway. Other held
+  // keys are paced to ~16/s; distinct keystrokes and paste are untouched.
   let lastRepeat = 0;
   term.attachCustomKeyEventHandler((e) => {
+    if (e.type === "keydown" && e.key === "Enter") {
+      const now = performance.now();
+      if (e.repeat && now < enterGateUntil) { e.preventDefault(); return false; }
+      enterGateUntil = now + 400; // closed early by the transport's onData
+      return true;
+    }
     if (!e.repeat) return true;
-    if (e.key === "Enter") { e.preventDefault(); return false; }
+    if (e.key === "Enter") { e.preventDefault(); return false; } // stray keypress repeats
     if (e.type === "keydown") {
       const now = performance.now();
       if (now - lastRepeat < 60) { e.preventDefault(); return false; }
@@ -321,7 +330,7 @@ async function connect() {
     // ws is open — wire the Go transport; its status pings drive the next steps.
     const handle = window.spacehatchSSHConnect({
       sink: (u8) => { try { ws.send(u8); } catch (_) { /* closed */ } },
-      onData: (u8) => term.write(typeof u8 === "string" ? u8 : new Uint8Array(u8)),
+      onData: (u8) => { enterGateUntil = 0; term.write(typeof u8 === "string" ? u8 : new Uint8Array(u8)); },
       onStatus: (s) => {
         if (/(…|\.\.\.)\s*$/.test(s)) stepStart(goTopic(s));
         else if (/connected\s*$/.test(s) && stepActive) stepOK();
