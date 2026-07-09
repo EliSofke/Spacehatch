@@ -37,7 +37,6 @@ function ensureTerm() {
     fontSize: 13,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
     cursorBlink: true,
-    convertEol: true,
     theme: { background: "#0b0e14", foreground: "#d7dae0" },
   });
   // eslint-disable-next-line no-undef
