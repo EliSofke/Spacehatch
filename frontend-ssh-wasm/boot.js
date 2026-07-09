@@ -195,7 +195,10 @@ function stepFinish(tag) {
 function stepOK() { stepFinish(TAG_OK); }
 function stepFail() { stepFinish(TAG_FAIL); }
 // Error detail printed under a failed step.
-function detail(msg) { if (term) term.writeln(`               \x1b[31m${msg}\x1b[0m`); }
+function detail(msg) {
+  if (!term) return;
+  for (const line of String(msg).split(/\r?\n/)) term.writeln(`               \x1b[31m${line}\x1b[0m`);
+}
 
 function setStatus(s) { if (els.status) els.status.textContent = s; renderSysinfo(); }
 
@@ -268,7 +271,11 @@ async function gh(path, opts = {}) {
       ...(opts.headers || {}),
     },
   });
-  if (!r.ok) throw new Error(`GitHub ${path}: ${r.status} ${await r.text()}`);
+  if (!r.ok) {
+    const need = r.headers.get("X-Accepted-GitHub-Permissions");
+    const body = (await r.text()).replace(/\s+/g, " ").trim();
+    throw new Error(`GitHub ${path}: ${r.status}${need ? ` — needs ${need}` : ""} ${body}`);
+  }
   return r.status === 204 ? {} : r.json();
 }
 
