@@ -44,6 +44,23 @@ function ensureTerm() {
   term.loadAddon(fit);
   term.open(els.term);
   loadRenderer(term);
+  // Held-key auto-repeat floods the networked pty. Measured on the live link:
+  // the client sends clean single "\r" per repeat, but the SERVER stream then
+  // contains real blank lines — readline echoes each accepted Enter ("\r\n")
+  // immediately while the prompt redraws arrive later in groups, so echoes stack
+  // into empty lines. Identical in Chrome and Firefox because it is pty output,
+  // not rendering. Fix at the source: don't forward Enter auto-repeat (holding
+  // Enter = one submit) and pace other held keys; distinct keystrokes and paste
+  // are untouched.
+  let lastRepeat = 0;
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type !== "keydown" || !e.repeat) return true;
+    if (e.key === "Enter") return false;
+    const now = performance.now();
+    if (now - lastRepeat < 60) return false; // ~16 repeats/s for held non-Enter keys
+    lastRepeat = now;
+    return true;
+  });
   fit.fit();
   window.__sshTerm = term;
   return term;
