@@ -336,6 +336,10 @@ async function launch(owner, repo) {
         const msg = String(e).replace(/^Error:\s*/, "");
         if (!/\b409\b/.test(msg)) { // 409 = already starting, benign
           detail(`start failed: ${msg}`);
+          if (/\b403\b/.test(msg)) {
+            detail("hint: starting a codespace needs a classic PAT with the 'codespace' scope");
+            detail("      (or a fine-grained PAT with Codespaces: Read and write on this repo).");
+          }
           throw e;
         }
       }
