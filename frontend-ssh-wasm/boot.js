@@ -318,9 +318,21 @@ async function launch(owner, repo) {
 
   if (cs.state !== "Available") {
     stepStart("Starting codespace");
-    try {
-      await gh(`/user/codespaces/${encodeURIComponent(cs.name)}/start`, { method: "POST" });
-    } catch (_) { /* already starting / not startable yet — poll decides */ }
+    // Only a genuinely stopped codespace needs an explicit start; transitional
+    // states (Starting/Provisioning/Queued/…) are already coming up, so we just
+    // poll. Surface a real start failure (e.g. 403 without codespaces:write, or
+    // 422) instead of silently polling a Shutdown codespace until timeout.
+    if (cs.state === "Shutdown" || cs.state === "Unavailable" || cs.state === "ShuttingDown") {
+      try {
+        await gh(`/user/codespaces/${encodeURIComponent(cs.name)}/start`, { method: "POST" });
+      } catch (e) {
+        const msg = String(e).replace(/^Error:\s*/, "");
+        if (!/\b409\b/.test(msg)) { // 409 = already starting, benign
+          detail(`start failed: ${msg}`);
+          throw e;
+        }
+      }
+    }
   }
   await poll(cs.name);
   return cs.name;
