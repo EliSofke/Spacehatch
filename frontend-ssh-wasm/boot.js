@@ -54,42 +54,42 @@ function tstamp() {
   return `\x1b[90m[${s.padStart(11)}]\x1b[0m`;
 }
 
-// A yellow-orange braille spinner pinned to the bottom line during long waits
-// (e.g. codespace provisioning). Timestamped boot lines scroll above it.
+// A yellow-orange braille spinner that animates in place at the end of a single
+// fixed boot line — no elapsed timer, and no new lines while waiting — so the
+// spinner stays put, e.g. "[   2.757000] codespace: Provisioning ⣾".
 const SPIN_FRAMES = "⣾⣽⣻⢿⡿⣟⣯⣷";
-let spinTimer = 0, spinLabel = "", spinFrame = 0, spinStart = 0;
+let spinTimer = 0, spinPrefix = "", spinFrame = 0;
 
-function renderSpin() {
+function drawSpin() {
   if (!term) return;
-  const el = ((performance.now() - spinStart) / 1000).toFixed(0);
-  const f = SPIN_FRAMES[spinFrame % SPIN_FRAMES.length];
-  term.write(`\r\x1b[K\x1b[38;5;214m${f}\x1b[0m ${spinLabel} \x1b[90m${el}s\x1b[0m`);
+  const g = SPIN_FRAMES[spinFrame % SPIN_FRAMES.length];
+  term.write(`\r\x1b[K${spinPrefix} \x1b[38;5;214m${g}\x1b[0m`);
 }
-function startSpinner(label) {
+// Begin a spinning line "[ts] text ⣾" with a fixed timestamp; only the glyph cycles.
+function startSpin(text) {
   if (!term) return;
-  spinLabel = label; spinFrame = 0; spinStart = performance.now();
-  if (spinTimer) clearInterval(spinTimer);
-  renderSpin();
-  spinTimer = setInterval(() => { spinFrame++; renderSpin(); }, 120);
+  finalizeSpin();
+  spinPrefix = `${tstamp()} ${text}`;
+  spinFrame = 0;
+  drawSpin();
+  spinTimer = setInterval(() => { spinFrame++; drawSpin(); }, 120);
 }
-function updateSpinner(label) { spinLabel = label; }
-function stopSpinner() {
+// Freeze the current spinning line into a permanent line (glyph removed).
+function finalizeSpin() {
   if (spinTimer) { clearInterval(spinTimer); spinTimer = 0; }
-  if (term) term.write("\r\x1b[K"); // clear the spinner line so the next line replaces it
+  if (term && spinPrefix) { term.write("\r\x1b[K"); term.writeln(spinPrefix); spinPrefix = ""; }
 }
 
 // One boot line. level: undefined | "ok" | "warn" | "error".
 function boot(msg, level) {
   if (!term) return;
+  if (spinTimer || spinPrefix) finalizeSpin(); // close any spinning line first
   let tag = "";
   if (level === "ok") tag = "\x1b[32m[  OK  ]\x1b[0m ";
   else if (level === "warn") tag = "\x1b[33m[ WARN ]\x1b[0m ";
   else if (level === "error") tag = "\x1b[31m[FAILED]\x1b[0m ";
   const body = level === "error" ? `\x1b[31m${msg}\x1b[0m` : msg;
-  const spinning = !!spinTimer;
-  if (spinning) term.write("\r\x1b[K");   // lift the spinner off the last line
   term.writeln(`${tstamp()} ${tag}${body}`);
-  if (spinning) renderSpin();             // re-pin the spinner to the bottom
 }
 
 // Backwards-compatible alias used by the retry logic below.
@@ -114,19 +114,23 @@ async function gh(path, opts = {}) {
 }
 
 async function poll(name, want = "Available", tries = 120, delayMs = 2000) {
-  let last = "";
-  startSpinner("waiting for codespace …");
+  let shown = "";
   try {
     for (let i = 0; i < tries; i++) {
       const cs = await gh(`/user/codespaces/${encodeURIComponent(name)}`);
-      if (cs.state !== last) { boot(`codespace: ${cs.state}`); setStatus(`${cs.state} …`); last = cs.state; }
+      if (cs.state !== shown) {
+        shown = cs.state;
+        setStatus(`${cs.state} …`);
+        if (cs.state === want) boot(`codespace: ${cs.state}`);
+        else startSpin(`codespace: ${cs.state}`); // spins in place on this line
+      }
       if (cs.state === want) return cs;
       if (cs.state === "Failed" || cs.state === "Deleted") throw new Error(`codespace ${cs.state}`);
       await new Promise((r) => setTimeout(r, delayMs));
     }
     throw new Error(`codespace did not reach ${want} in time`);
   } finally {
-    stopSpinner();
+    finalizeSpin();
   }
 }
 
@@ -213,8 +217,7 @@ async function connect() {
     // tunnel and the relay rejects it (close 1006). status.hostConnectionCount
     // (passed through by the worker) is the precise readiness signal.
     setStatus("waiting for tunnel host …");
-    boot("relay: waiting for tunnel host to attach …");
-    startSpinner("waiting for tunnel host …");
+    startSpin("relay: waiting for tunnel host …");
     let relayUri;
     try {
       for (let i = 0; ; i++) {
@@ -233,7 +236,7 @@ async function connect() {
         await new Promise((r) => setTimeout(r, 750));
       }
     } finally {
-      stopSpinner();
+      finalizeSpin();
     }
 
     await loadGo();
