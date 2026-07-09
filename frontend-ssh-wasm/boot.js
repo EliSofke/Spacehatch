@@ -11,9 +11,6 @@
 const cfg = window.SPACEHATCH_D_CONFIG || {};
 const WORKER_URL = (cfg.workerUrl || "").replace(/\/$/, "");
 
-const SPACEHATCH_VERSION = "0.1.0";
-const SPACEHATCH_COMMIT = "__COMMIT__"; // replaced with the short git SHA at deploy (pages.yml)
-
 const els = {
   token: /** @type {HTMLInputElement} */ (document.getElementById("token")),
   owner: /** @type {HTMLInputElement} */ (document.getElementById("owner")),
@@ -213,6 +210,22 @@ function loadGo() {
   return goReady;
 }
 
+// ---- build metadata -------------------------------------------------------
+// version.json is generated at deploy (SemVer from the repo + git commit +
+// build time). Fetched once and cached; falls back gracefully in dev.
+let versionInfo = null;
+async function loadVersion() {
+  if (versionInfo) return versionInfo;
+  try {
+    const r = await fetch("./version.json", { cache: "no-cache" });
+    if (!r.ok) throw new Error(String(r.status));
+    versionInfo = await r.json();
+  } catch (_) {
+    versionInfo = { commit: "dev" };
+  }
+  return versionInfo;
+}
+
 // ---- connect --------------------------------------------------------------
 async function connect() {
   const owner = els.owner.value.trim();
@@ -221,11 +234,15 @@ async function connect() {
   els.connect.disabled = true;
 
   ensureTerm();
-  // neofetch-style header: cyan logo on the left, three attributes.
+  // neofetch-style header: cyan logo on the left, three attributes. Version and
+  // commit come from version.json (generated at deploy).
+  const v = await loadVersion();
   const CY = "\x1b[36m", CB = "\x1b[1;36m", D = "\x1b[90m", RS = "\x1b[0m";
-  const commit = SPACEHATCH_COMMIT.startsWith("__") ? "dev" : SPACEHATCH_COMMIT;
+  let ver = "";
+  if (v.version) ver += `${CY}v${v.version}${RS}`;
+  if (v.commit) ver += `${ver ? " " : ""}${D}(${v.commit})${RS}`;
   const lbl = (s) => `${CB}${s.padEnd(10)}${RS}`;
-  term.writeln(`${CY}/------\\${RS}   ${CB}SpaceHatch${RS} ${CY}v${SPACEHATCH_VERSION}${RS} ${D}(${commit})${RS}`);
+  term.writeln(`${CY}/------\\${RS}   ${CB}SpaceHatch${RS} ${ver}`);
   term.writeln(`${CY}[> SH <]${RS}   ${lbl("Terminal")}Xterm.js`);
   term.writeln(`${CY}\\------/${RS}   ${lbl("Target")}${owner}/${repo}`);
   term.writeln("");

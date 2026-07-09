@@ -36,14 +36,19 @@ jobs:
         run: bash gh-wasm-src/build.sh
       - name: Build spacehatch-ssh.wasm (dev-tunnels + grpc-go + x/crypto/ssh -> GOOS=js)
         run: bash ssh-wasm-src/build.sh
-      - name: Stamp version (git short SHA)
-        run: sed -i "s/__COMMIT__/$(git rev-parse --short HEAD)/" frontend-ssh-wasm/boot.js
       - name: Assemble Pages site (Go-transport SSH at /, gh terminal at /gh)
         run: |
           rm -rf _site && mkdir -p _site/gh
           cp -r frontend-ssh-wasm/. _site/
           cp -r frontend-gh-wasm/. _site/gh/
           echo "site tree:"; find _site -maxdepth 2 -type f | sort
+      - name: Write build metadata (version.json)
+        run: |
+          jq --arg commit "$(git rev-parse --short HEAD)" \
+             --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+             '. + {commit: $commit, built: $built}' \
+             frontend-ssh-wasm/version.json > _site/version.json
+          cat _site/version.json
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
