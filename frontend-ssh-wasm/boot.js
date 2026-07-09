@@ -306,8 +306,14 @@ function stateTopic(_state) {
   return "Waiting for codespace to start";
 }
 
+const CS_PROGRESSING = new Set([
+  "Starting", "Provisioning", "Queued", "Awaiting", "Created", "Updating", "Rebuilding", "Exporting",
+]);
 async function poll(name, want = "Available", tries = 120, delayMs = 2000) {
-  let shown = "", unchanged = 0;
+  const guide =
+    "usually a Codespaces spending limit, an unavailable machine type, or a platform issue.\n" +
+    "open github.com/codespaces to start it manually and see the reason, or delete it and reconnect.";
+  let shown = "", unchanged = 0, sawProgress = false;
   for (let i = 0; i < tries; i++) {
     const cs = await gh(`/user/codespaces/${encodeURIComponent(name)}`);
     if (cs.state !== shown) {
@@ -317,21 +323,17 @@ async function poll(name, want = "Available", tries = 120, delayMs = 2000) {
     } else {
       unchanged++;
     }
+    if (CS_PROGRESSING.has(cs.state)) sawProgress = true;
     if (cs.state === want) return cs;
-    if (cs.state === "Failed" || cs.state === "Deleted") throw new Error(`codespace ${cs.state}`);
-    // A stopped codespace that never leaves its state after we asked it to start
-    // means the start did not take effect — commonly a Codespaces spending limit,
-    // an unavailable machine type, or a transient platform issue. Fail fast with
-    // guidance instead of silently polling until the overall timeout.
-    if ((cs.state === "Shutdown" || cs.state === "Unavailable") && unchanged * delayMs >= 30000) {
-      detail(`codespace stuck in ${cs.state} — the start did not take effect.`);
-      detail("open github.com/codespaces to start it manually and see the real reason");
-      detail("(spending limit / machine availability), or delete it there and reconnect.");
-      throw new Error(`codespace stuck in ${cs.state}`);
+    if (cs.state === "Failed" || cs.state === "Deleted") throw new Error(`codespace reported ${cs.state}.\n${guide}`);
+    // Stopped state that either never moved (30s) or was reached again after the
+    // codespace had started — the start did not hold. Fail fast with guidance.
+    if ((cs.state === "Shutdown" || cs.state === "Unavailable") && (sawProgress || unchanged * delayMs >= 30000)) {
+      throw new Error(`codespace fell back to ${cs.state} — the start didn't take effect.\n${guide}`);
     }
     await new Promise((r) => setTimeout(r, delayMs));
   }
-  throw new Error(`codespace did not reach ${want} in time`);
+  throw new Error(`codespace did not reach ${want} in time.\n${guide}`);
 }
 
 // Connect to the most recently created codespace, regardless of its state; only
