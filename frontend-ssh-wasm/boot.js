@@ -204,7 +204,8 @@ function info(msg) {
   for (const line of String(msg).split(/\r?\n/)) term.writeln(`               \x1b[90m${line}\x1b[0m`);
 }
 
-function setStatus(s) { if (els.status) els.status.textContent = s; renderSysinfo(); }
+let sysStatus = "";
+function setStatus(s) { sysStatus = s; if (els.status) els.status.textContent = s; renderSysinfo(); }
 
 // System-info line above the terminal, in the terminal aesthetic: the [ SH ]
 // motif, a 24-hour HH:MM clock, the container (codespace) name, and its status.
@@ -226,7 +227,7 @@ function clockStr() {
 }
 function renderSysinfo() {
   if (!els.sysinfo) return;
-  const status = ((els.status && els.status.textContent) || "").trim();
+  const status = (sysStatus || "").trim();
   const owner = els.owner.value.trim() || "EliSofke", repo = els.repo.value.trim() || "Spacehatch";
   const col = sysStatusColor(status || "idle");
   const A = (href, text) => `<a href="${href}" target="_blank" rel="noopener">${esc(text)}</a>`;
@@ -300,13 +301,14 @@ function startSysinfo() {
 // baseline (step A) for the responsiveness work.
 let rttAvg = 0;
 function showRtt(stage, ms) {
-  if (!els.rtt || typeof ms !== "number" || ms < 0) return;
+  if (typeof ms !== "number" || ms < 0) return;
   rttAvg = rttAvg ? rttAvg * 0.7 + ms * 0.3 : ms;
-  const v = Math.round(rttAvg);
-  const color = rttColor(v);
-  els.rtt.textContent = `${stage} ${v} ms`;
-  els.rtt.style.color = color;
-  els.rtt.style.borderColor = color;
+  if (els.rtt) { // legacy badge, if present
+    const v = Math.round(rttAvg), color = rttColor(v);
+    els.rtt.textContent = `${stage} ${v} ms`;
+    els.rtt.style.color = color;
+    els.rtt.style.borderColor = color;
+  }
   renderSysinfo();
 }
 
