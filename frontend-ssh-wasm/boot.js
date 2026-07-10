@@ -294,11 +294,6 @@ function startSysinfo() {
     window.addEventListener("resize", () => requestAnimationFrame(fitCodespace));
   }
 }
-function startSysinfo() {
-  loadVersion().then(renderSysinfo).catch(() => {});
-  renderSysinfo();
-  if (!sysTimer) sysTimer = window.setInterval(renderSysinfo, 1000);
-}
 
 // Live latency readout. Keeps a light EWMA to smooth jitter and colour-codes the
 // value (green ≤ 80 ms, amber ≤ 200 ms, red beyond). This is the measurement
