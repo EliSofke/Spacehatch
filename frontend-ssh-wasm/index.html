@@ -16,10 +16,11 @@
     #term { flex: 1 1 auto; min-height: 0; padding: 6px 2px 4px; display: flex; justify-content: center; }
     #sysinfo { display: flex; align-items: center; font: 18px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 3px 16px; letter-spacing: .3px; overflow: hidden; border-top: 1px solid #161b26; }
     #sysinfo > .grp { white-space: nowrap; }
-    #sysinfo > .left { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    #sysinfo > .left { flex: 0 0 auto; margin-right: .9ch; }
+    #sysinfo > .mid { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; margin-right: .9ch; }
     #sysinfo > .right { flex: 0 0 auto; }
-    #sysinfo .fill { flex: 1 0 8px; }
-    #sysinfo a { text-decoration: none; }
+    #sysinfo .tail { flex: 1 1 auto; min-width: 0; }
+    #sysinfo a { color: inherit; text-decoration: none; }
     #sysinfo a:hover { text-decoration: underline; }
     #sysinfo:empty { display: none; }
     #rtt { font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: #6ac26a; border: 1px solid #6ac26a; border-radius: 5px; padding: 1px 6px; letter-spacing: .3px; }

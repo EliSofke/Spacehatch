@@ -225,40 +225,35 @@ function renderSysinfo() {
   const d = new Date();
   const clock = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
   const status = ((els.status && els.status.textContent) || "").trim();
-  const owner = els.owner.value.trim(), repo = els.repo.value.trim();
-  const ver = versionInfo && versionInfo.version ? `v${versionInfo.version}` : "";
-  const CY = "#7dcfff", DIM = "#4a5060", col = sysStatusColor(status || "idle");
-  const A = (href, text, color) =>
-    `<a href="${href}" target="_blank" rel="noopener" style="color:${color || CY}">${esc(text)}</a>`;
-  const dim = (t) => `<span style="color:${DIM}">${t}</span>`;
+  const owner = els.owner.value.trim() || "EliSofke", repo = els.repo.value.trim() || "Spacehatch";
+  const col = sysStatusColor(status || "idle");
+  const A = (href, text) => `<a href="${href}" target="_blank" rel="noopener">${esc(text)}</a>`;
 
-  // Target: each meaningful object is a link — user, repository, codespace.
-  let target = "";
-  if (owner && repo) {
-    const ownerUrl = `https://github.com/${encodeURIComponent(owner)}`;
-    target = A(ownerUrl, owner) + dim("/") + A(`${ownerUrl}/${encodeURIComponent(repo)}`, repo);
-    if (csName) target += dim("@") + A(`https://github.com/codespaces/${encodeURIComponent(csName)}`, csName);
-  }
-  // Status verb, with the round-trip time coupled to it when connected:
-  // "connected <rtt> to <target>". The verb takes the status colour; the RTT
-  // takes its own latency colour.
-  let verbHtml = "";
-  if (/connected/i.test(status)) {
-    const rtt = Math.round(rttAvg);
-    const rttPart = rtt > 0 ? ` <span style="color:${rttColor(rtt)}">${rtt} ms</span>` : "";
-    verbHtml = `<span style="color:${col}">connected</span>${rttPart} <span style="color:${col}">to</span>`;
-  } else if (status && !/^idle$/i.test(status)) {
-    verbHtml = `<span style="color:${col}">${esc(status)}</span>`;
-  }
+  // Verb chosen so "<verb> to <target>" always reads as a sentence, in any state.
+  let verb = "connecting";
+  if (/connected/i.test(status)) verb = "connected";
+  else if (/fail|error/i.test(status)) verb = "couldn't connect";
 
-  const appUrl = `https://github.com/${encodeURIComponent(owner || "EliSofke")}/${encodeURIComponent(repo || "Spacehatch")}`;
-  const left = dim("[&gt;") + " " + A(appUrl, "SpaceHatch")
-    + (ver ? " " + dim(esc(ver)) : "")
-    + (verbHtml ? "  " + verbHtml : "")
-    + (target ? " " + target : "");
-  const right = `<span style="color:${CY}">${clock}</span> ` + dim("&lt;]");
+  // Target reads codespace@owner/repo; each object links to its GitHub page.
+  const ownerUrl = `https://github.com/${encodeURIComponent(owner)}`;
+  const repoUrl = `${ownerUrl}/${encodeURIComponent(repo)}`;
+  const cs = csName ? A(`https://github.com/codespaces/${encodeURIComponent(csName)}`, csName) + "@" : "";
+  const target = cs + A(ownerUrl, owner) + "/" + A(repoUrl, repo);
+  const sh = `[&gt; ${A(repoUrl, "SH")} &lt;]`;
 
-  els.sysinfo.innerHTML = `<span class="grp left">${left}</span><span class="fill"></span><span class="grp right">${right}</span>`;
+  const rtt = Math.round(rttAvg);
+  const rttHtml = rtt > 0 ? `<span style="color:${rttColor(rtt)}">${rtt} ms</span>` : "—";
+
+  // Only the verb and the RTT are coloured; everything else is plain text.
+  const left = `${clock} <span style="color:${col}">${esc(verb)}</span>`;
+  const mid = `to ${target} via ${sh}`;
+  const right = `⇄ ${rttHtml}`;
+
+  els.sysinfo.innerHTML =
+    `<span class="grp left">${left}</span>` +
+    `<span class="grp mid">${mid}</span>` +
+    `<span class="grp right">${right}</span>` +
+    `<span class="tail"></span>`;
 }
 function startSysinfo() {
   loadVersion().then(renderSysinfo).catch(() => {});
