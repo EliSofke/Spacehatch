@@ -472,6 +472,10 @@ let live = false, connecting = false, curWs = null, curShell = null;
 // the *current* shell via curShell), so reconnecting doesn't stack duplicate
 // handlers that would double every keystroke.
 let ioBound = false, fitResizeBound = false, fitTimer = 0;
+// Each connect attempt bumps `gen`; callbacks capture the gen they were wired
+// under so a late event from a torn-down session can never tear down the current
+// one (which would otherwise show up as spurious, frequent reconnects).
+let gen = 0;
 // Timestamps of recent auto-reconnects — bounds runaway loops if a codespace
 // keeps dropping right after it comes back.
 let reconnects = [];
@@ -485,23 +489,28 @@ function teardownSession() {
 
 // Called when the transport dies under a live session: the relay closed the
 // socket (ws.onclose), the Go keepalive stopped answering (onClosed), or a
-// tab-return probe failed. Surfaces the drop and attempts a bounded reconnect;
-// the codespace stays up, so reconnecting reattaches quickly.
-function handleDisconnect(reason) {
+// tab-return probe failed. srcGen ties the event to the session it came from.
+// Surfaces the drop (including the WebSocket close code, which pins down the
+// cause) and attempts a bounded reconnect; the codespace stays up, so
+// reconnecting reattaches quickly.
+function handleDisconnect(reason, srcGen, code, closeReason) {
+  if (srcGen !== undefined && srcGen !== gen) return; // stale event from an old session
   if (!live || connecting) return; // ignore drops during connect and duplicates
   live = false;
   rttAvg = 0; // stop showing a stale latency
+  const codeTag = code ? ` [ws ${code}${closeReason ? " " + closeReason : ""}]` : "";
+  try { console.warn("spacehatch disconnect:", reason, "code=", code, "reason=", closeReason); } catch (_) { /* noop */ }
   const now = Date.now();
   reconnects = reconnects.filter((t) => now - t < 60000);
   if (reconnects.length >= 3) {
     teardownSession();
     setStatus("disconnected");
-    if (term) term.writeln(`\r\n\x1b[31mconnection lost (${reason}) — press Connect to reconnect\x1b[0m`);
+    if (term) term.writeln(`\r\n\x1b[31mconnection lost (${reason})${codeTag} — press Connect to reconnect\x1b[0m`);
     return;
   }
   reconnects.push(now);
   setStatus("reconnecting …");
-  if (term) term.writeln(`\r\n\x1b[33mconnection lost (${reason}) — reconnecting…\x1b[0m`);
+  if (term) term.writeln(`\r\n\x1b[33mconnection lost (${reason})${codeTag} — reconnecting…\x1b[0m`);
   teardownSession();
   connect();
 }
@@ -515,8 +524,8 @@ if (typeof document !== "undefined") {
     const h = window.__sshHandle;
     if (!h || !h.ping) return;
     h.ping()
-      .then((ms) => { if (typeof ms === "number" && ms < 0) handleDisconnect("idle timeout"); })
-      .catch(() => handleDisconnect("idle timeout"));
+      .then((ms) => { if (typeof ms === "number" && ms < 0) handleDisconnect("idle timeout", gen); })
+      .catch(() => handleDisconnect("idle timeout", gen));
   });
 }
 
@@ -526,6 +535,7 @@ async function connect() {
   const repo = els.repo.value.trim();
   if (!owner || !repo) { setStatus("enter owner and repo"); return; }
   connecting = true;
+  const sessGen = ++gen;
   els.connect.disabled = true;
   startSysinfo();
 
@@ -599,7 +609,7 @@ async function connect() {
         else if (/connected\s*$/.test(s) && stepActive) stepOK();
       },
       onRtt: (stage, ms) => showRtt(stage, ms),
-      onClosed: () => handleDisconnect("ssh keepalive stopped"),
+      onClosed: () => handleDisconnect("ssh keepalive stopped", sessGen),
       workerUrl: WORKER_URL,
       cluster: tp.clusterId,
       tunnelId: tp.tunnelId,
@@ -610,7 +620,7 @@ async function connect() {
     ws.onmessage = (e) => handle.push(new Uint8Array(e.data));
     window.__sshHandle = handle; // exposes handle.ping() for latency probes
     ws.onerror = () => { /* failure surfaces via the connect promise / close */ };
-    ws.onclose = () => handleDisconnect("relay closed the connection");
+    ws.onclose = (e) => handleDisconnect("relay closed the connection", sessGen, e && e.code, e && e.reason);
     handle.promise.then((shell) => {
       if (stepActive) stepOK();
       term.writeln("\x1b[90m" + "-".repeat(72) + "\x1b[0m");

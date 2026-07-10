@@ -73,7 +73,25 @@ func Connect(ctx context.Context, conn net.Conn, logger *log.Logger) (*Client, e
 	if err := sess.Connect(ctx); err != nil {
 		return nil, fmt.Errorf("relay ssh connect: %w", err)
 	}
-	return &Client{sess: sess, pf: pf}, nil
+	c := &Client{sess: sess, pf: pf}
+	// Keep the relay session alive at the SSH session level. The inner OpenSSH
+	// keepalive already sends port-forward channel data, but some relays only
+	// reset their idle timer on session-level requests, so send one of those too.
+	// Stops when the request errors (session gone).
+	go c.keepAlive()
+	return c, nil
+}
+
+// keepAlive sends a periodic session-level global request so the relay does not
+// treat the tunnel as idle. The relay may answer with a request-failure (that is
+// fine — any reply proves liveness); we only stop on a transport error.
+func (c *Client) keepAlive() {
+	for {
+		time.Sleep(20 * time.Second)
+		if _, _, err := c.sess.SendSessionRequest("keepalive@openssh.com", true, nil); err != nil {
+			return
+		}
+	}
 }
 
 // WaitForPort blocks until the host forwards the given port (or ctx is done).
