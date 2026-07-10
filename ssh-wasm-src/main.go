@@ -51,9 +51,23 @@ func connect(this js.Value, args []js.Value) any {
 	onData := opts.Get("onData")
 	onStatus := opts.Get("onStatus")
 	onRtt := opts.Get("onRtt")
+	onClosed := opts.Get("onClosed")
 	status := func(s string) {
 		if onStatus.Type() == js.TypeFunction {
 			onStatus.Invoke(s)
+		}
+	}
+	// notifyClosed tells JS the transport is gone (e.g. the relay dropped an idle
+	// connection) so the UI can stop showing a stale "connected" and reconnect.
+	// Invoked at most once, from the keepalive loop when a ping errors.
+	closedOnce := false
+	notifyClosed := func() {
+		if closedOnce {
+			return
+		}
+		closedOnce = true
+		if onClosed.Type() == js.TypeFunction {
+			onClosed.Invoke()
 		}
 	}
 	// emitRtt reports a measured round-trip time (milliseconds, sub-ms precision)
@@ -96,13 +110,14 @@ func connect(this js.Value, args []js.Value) any {
 				}),
 			}
 			// Baseline latency probe: emit the full-stack SSH keepalive RTT every
-			// 2 s so the UI can show a live readout. Stops when a ping errors
-			// (connection gone).
+			// 2 s so the UI can show a live readout. When a ping errors the
+			// connection is gone: tell JS (so it can reconnect) and stop.
 			go func() {
 				for {
 					time.Sleep(2 * time.Second)
 					d, err := shell.Ping()
 					if err != nil {
+						notifyClosed()
 						return
 					}
 					emitRtt("ssh", d)

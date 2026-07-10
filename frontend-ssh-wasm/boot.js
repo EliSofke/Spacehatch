@@ -214,9 +214,10 @@ const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt
 // FAIL red (\x1b[31m #cc0000), and the spinner's orange (256-colour 214 #ffaf00)
 // for in-progress states. xterm's rendering is authoritative.
 function sysStatusColor(s) {
+  if (/disconnect|lost/i.test(s)) return "#cc0000";
   if (/connected/i.test(s)) return "#4e9a06";
   if (/fail|error/i.test(s)) return "#cc0000";
-  if (/…|\.\.\.|connect|launch|start|wait|provision|resolv|attach|load|queue|available/i.test(s)) return "#ffaf00";
+  if (/…|\.\.\.|reconnect|connect|launch|start|wait|provision|resolv|attach|load|queue|available/i.test(s)) return "#ffaf00";
   return "#555753";
 }
 const rttColor = (v) => (v <= 80 ? "#4e9a06" : v <= 200 ? "#ffaf00" : "#cc0000");
@@ -233,7 +234,9 @@ function renderSysinfo() {
 
   // Verb chosen so "<verb> to <target>" always reads as a sentence, in any state.
   let verb = "connecting";
-  if (/connected/i.test(status)) verb = "connected";
+  if (/disconnect|lost/i.test(status)) verb = "disconnected";
+  else if (/reconnect/i.test(status)) verb = "reconnecting";
+  else if (/connected/i.test(status)) verb = "connected";
   else if (/fail|error/i.test(status)) verb = "couldn't connect";
 
   const ownerUrl = `https://github.com/${encodeURIComponent(owner)}`;
@@ -459,10 +462,70 @@ async function loadVersion() {
 }
 
 // ---- connect --------------------------------------------------------------
+
+// Session liveness. `live` is true only while an interactive shell is up; it
+// gates disconnect handling so drops during the connect handshake fall through
+// to connect()'s own error path instead. curWs/curShell reference the active
+// transport so a reconnect can tear the old one down cleanly.
+let live = false, connecting = false, curWs = null, curShell = null;
+// Terminal IO and the fit-on-resize listener are wired exactly once (they read
+// the *current* shell via curShell), so reconnecting doesn't stack duplicate
+// handlers that would double every keystroke.
+let ioBound = false, fitResizeBound = false, fitTimer = 0;
+// Timestamps of recent auto-reconnects — bounds runaway loops if a codespace
+// keeps dropping right after it comes back.
+let reconnects = [];
+
+function teardownSession() {
+  live = false;
+  try { if (curWs) { curWs.onclose = null; curWs.onmessage = null; curWs.onerror = null; curWs.close(); } } catch (_) { /* noop */ }
+  try { const h = window.__sshHandle; if (h && h.close) h.close(); } catch (_) { /* noop */ }
+  curWs = null; curShell = null; window.__sshHandle = null;
+}
+
+// Called when the transport dies under a live session: the relay closed the
+// socket (ws.onclose), the Go keepalive stopped answering (onClosed), or a
+// tab-return probe failed. Surfaces the drop and attempts a bounded reconnect;
+// the codespace stays up, so reconnecting reattaches quickly.
+function handleDisconnect(reason) {
+  if (!live || connecting) return; // ignore drops during connect and duplicates
+  live = false;
+  rttAvg = 0; // stop showing a stale latency
+  const now = Date.now();
+  reconnects = reconnects.filter((t) => now - t < 60000);
+  if (reconnects.length >= 3) {
+    teardownSession();
+    setStatus("disconnected");
+    if (term) term.writeln(`\r\n\x1b[31mconnection lost (${reason}) — press Connect to reconnect\x1b[0m`);
+    return;
+  }
+  reconnects.push(now);
+  setStatus("reconnecting …");
+  if (term) term.writeln(`\r\n\x1b[33mconnection lost (${reason}) — reconnecting…\x1b[0m`);
+  teardownSession();
+  connect();
+}
+
+// A backgrounded tab throttles timers, so the keepalive can stall and the relay
+// may drop the idle socket while we're away. On return, probe once: if the
+// transport is dead, reconnect immediately instead of waiting for a stale UI.
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible" || !live) return;
+    const h = window.__sshHandle;
+    if (!h || !h.ping) return;
+    h.ping()
+      .then((ms) => { if (typeof ms === "number" && ms < 0) handleDisconnect("idle timeout"); })
+      .catch(() => handleDisconnect("idle timeout"));
+  });
+}
+
 async function connect() {
+  if (connecting) return; // guard reentry (e.g. double-click, overlapping reconnect)
   const owner = els.owner.value.trim();
   const repo = els.repo.value.trim();
   if (!owner || !repo) { setStatus("enter owner and repo"); return; }
+  connecting = true;
   els.connect.disabled = true;
   startSysinfo();
 
@@ -536,6 +599,7 @@ async function connect() {
         else if (/connected\s*$/.test(s) && stepActive) stepOK();
       },
       onRtt: (stage, ms) => showRtt(stage, ms),
+      onClosed: () => handleDisconnect("ssh keepalive stopped"),
       workerUrl: WORKER_URL,
       cluster: tp.clusterId,
       tunnelId: tp.tunnelId,
@@ -546,25 +610,32 @@ async function connect() {
     ws.onmessage = (e) => handle.push(new Uint8Array(e.data));
     window.__sshHandle = handle; // exposes handle.ping() for latency probes
     ws.onerror = () => { /* failure surfaces via the connect promise / close */ };
-    ws.onclose = () => { /* handled by the connect promise */ };
+    ws.onclose = () => handleDisconnect("relay closed the connection");
     handle.promise.then((shell) => {
       if (stepActive) stepOK();
       term.writeln("\x1b[90m" + "-".repeat(72) + "\x1b[0m");
       term.focus();
+      // Mark the session live and adopt this transport as the current one.
+      curShell = shell; curWs = ws; live = true;
       // Enable predictive local echo now that the interactive shell is live.
       predict.on = true; predict.alt = false; predict.pending.length = 0; predict.pausedUntil = 0;
-      term.onData((d) => { shell.write(d); predictInput(d); });
-      let lastCols = term.cols, lastRows = term.rows;
-      term.onResize(({ cols, rows }) => {
-        if (cols === lastCols && rows === lastRows) return;
-        lastCols = cols; lastRows = rows;
-        shell.resize(cols, rows);
-      });
-      let fitTimer = 0;
-      window.addEventListener("resize", () => {
-        clearTimeout(fitTimer);
-        fitTimer = setTimeout(() => fit.fit(), 150);
-      });
+      // Wire terminal IO and the resize->fit listener exactly once; both target
+      // the *current* shell, so a later reconnect swaps curShell without stacking
+      // duplicate handlers (which would double every keystroke).
+      if (!ioBound) {
+        ioBound = true;
+        term.onData((d) => { if (curShell) { curShell.write(d); predictInput(d); } });
+        term.onResize(({ cols, rows }) => { if (curShell) curShell.resize(cols, rows); });
+      } else {
+        curShell.resize(term.cols, term.rows); // sync size for the new shell
+      }
+      if (!fitResizeBound) {
+        fitResizeBound = true;
+        window.addEventListener("resize", () => {
+          clearTimeout(fitTimer);
+          fitTimer = setTimeout(() => fit.fit(), 150);
+        });
+      }
       setStatus("connected");
     }).catch((err) => { if (stepActive) stepFail(); detail(String(err)); setStatus("failed"); });
   } catch (e) {
@@ -572,6 +643,7 @@ async function connect() {
     detail(String(e && e.message ? e.message : e));
     setStatus("error");
   } finally {
+    connecting = false;
     els.connect.disabled = false;
   }
 }
