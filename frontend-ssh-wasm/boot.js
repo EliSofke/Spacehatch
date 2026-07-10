@@ -214,13 +214,16 @@ function setStatus(s) { sysStatus = s; if (els.status) els.status.textContent = 
 // needed for it. GitHub exposes no push/subscribe for the codespace state itself.
 let csName = "", sysTimer = 0, sysResizeBound = false;
 const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+// Colours mirror what xterm.js actually renders: OK green (\x1b[32m #4e9a06),
+// FAIL red (\x1b[31m #cc0000), and the spinner's orange (256-colour 214 #ffaf00)
+// for in-progress states. xterm's rendering is authoritative.
 function sysStatusColor(s) {
-  if (/connected/i.test(s)) return "#6ac26a";
-  if (/fail|error/i.test(s)) return "#e06c6c";
-  if (/…|\.\.\.|connect|launch|start|wait|provision|resolv|attach|load|queue|available/i.test(s)) return "#e0b341";
-  return "#6a7080";
+  if (/connected/i.test(s)) return "#4e9a06";
+  if (/fail|error/i.test(s)) return "#cc0000";
+  if (/…|\.\.\.|connect|launch|start|wait|provision|resolv|attach|load|queue|available/i.test(s)) return "#ffaf00";
+  return "#555753";
 }
-const rttColor = (v) => (v <= 80 ? "#6ac26a" : v <= 200 ? "#e0b341" : "#e06c6c");
+const rttColor = (v) => (v <= 80 ? "#4e9a06" : v <= 200 ? "#ffaf00" : "#cc0000");
 function clockStr() {
   const d = new Date();
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
