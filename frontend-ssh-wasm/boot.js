@@ -245,8 +245,8 @@ function renderSysinfo() {
   const rttHtml = rtt > 0 ? `<span style="color:${rttColor(rtt)}">${rtt} ms</span>` : "—";
 
   // Only the verb and the RTT are coloured; everything else is plain text.
-  const left = `${clock} <span style="color:${col}">${esc(verb)}</span>`;
-  const mid = `to ${target} via ${sh}`;
+  const left = `${clock} ${sh} <span style="color:${col}">${esc(verb)}</span>`;
+  const mid = `to ${target}`;
   const right = `⇄ ${rttHtml}`;
 
   els.sysinfo.innerHTML =
