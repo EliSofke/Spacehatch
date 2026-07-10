@@ -259,25 +259,24 @@ function renderSysinfo() {
   els.sysinfo.innerHTML =
     `<span class="grp left">${left}</span>` +
     `<span class="grp mid">${mid}</span>` +
-    `<span class="grp right">${right}</span>` +
-    `<span class="tail"></span>`;
+    `<span class="grp right">${right}</span>`;
   fitCodespace();
 }
 // Shorten the codespace name (only) until the middle group stops overflowing,
 // appending a literal "..." before the "@". Binary search over the prefix length.
 function fitCodespace() {
   if (!els.sysinfo) return;
-  const bar = els.sysinfo;
-  const cs = bar.querySelector(".cs");
+  const mid = els.sysinfo.querySelector(".mid");
+  const cs = mid && mid.querySelector(".cs");
   if (!cs) return;
   const full = cs.dataset.full || cs.textContent;
   cs.textContent = full;
-  if (bar.scrollWidth <= bar.clientWidth) return; // whole bar fits at full length
+  if (mid.scrollWidth <= mid.clientWidth + 1) return; // fits at full length
   let lo = 0, hi = full.length;
   while (lo < hi) {
     const n = Math.ceil((lo + hi) / 2);
     cs.textContent = full.slice(0, n) + "...";
-    if (bar.scrollWidth <= bar.clientWidth) lo = n; else hi = n - 1;
+    if (mid.scrollWidth <= mid.clientWidth + 1) lo = n; else hi = n - 1;
   }
   cs.textContent = full.slice(0, lo) + "...";
 }
