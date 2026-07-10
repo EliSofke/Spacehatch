@@ -219,6 +219,7 @@ function sysStatusColor(s) {
   if (/…|\.\.\.|connect|launch|start|wait|provision|resolv|attach|load|queue|available/i.test(s)) return "#e0b341";
   return "#6a7080";
 }
+const rttColor = (v) => (v <= 80 ? "#6ac26a" : v <= 200 ? "#e0b341" : "#e06c6c");
 function renderSysinfo() {
   if (!els.sysinfo) return;
   const d = new Date();
@@ -238,15 +239,22 @@ function renderSysinfo() {
     target = A(ownerUrl, owner) + dim("/") + A(`${ownerUrl}/${encodeURIComponent(repo)}`, repo);
     if (csName) target += dim("@") + A(`https://github.com/codespaces/${encodeURIComponent(csName)}`, csName);
   }
-  // Status verb: "connected to <target>", else the raw transitional status.
-  let verb = "";
-  if (/connected/i.test(status)) verb = "connected to";
-  else if (status && !/^idle$/i.test(status)) verb = status;
+  // Status verb, with the round-trip time coupled to it when connected:
+  // "connected <rtt> to <target>". The verb takes the status colour; the RTT
+  // takes its own latency colour.
+  let verbHtml = "";
+  if (/connected/i.test(status)) {
+    const rtt = Math.round(rttAvg);
+    const rttPart = rtt > 0 ? ` <span style="color:${rttColor(rtt)}">${rtt} ms</span>` : "";
+    verbHtml = `<span style="color:${col}">connected</span>${rttPart} <span style="color:${col}">to</span>`;
+  } else if (status && !/^idle$/i.test(status)) {
+    verbHtml = `<span style="color:${col}">${esc(status)}</span>`;
+  }
 
   const appUrl = `https://github.com/${encodeURIComponent(owner || "EliSofke")}/${encodeURIComponent(repo || "Spacehatch")}`;
   const left = dim("[&gt;") + " " + A(appUrl, "SpaceHatch")
     + (ver ? " " + dim(esc(ver)) : "")
-    + (verb ? `  <span style="color:${col}">${esc(verb)}</span>` : "")
+    + (verbHtml ? "  " + verbHtml : "")
     + (target ? " " + target : "");
   const right = `<span style="color:${CY}">${clock}</span> ` + dim("&lt;]");
 
@@ -266,10 +274,11 @@ function showRtt(stage, ms) {
   if (!els.rtt || typeof ms !== "number" || ms < 0) return;
   rttAvg = rttAvg ? rttAvg * 0.7 + ms * 0.3 : ms;
   const v = Math.round(rttAvg);
-  const color = v <= 80 ? "#6ac26a" : v <= 200 ? "#e0b341" : "#e06c6c";
+  const color = rttColor(v);
   els.rtt.textContent = `${stage} ${v} ms`;
   els.rtt.style.color = color;
   els.rtt.style.borderColor = color;
+  renderSysinfo();
 }
 
 // Map the Go transport's status pings to active-voice step topics.
