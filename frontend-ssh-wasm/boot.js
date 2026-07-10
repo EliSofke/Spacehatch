@@ -199,10 +199,6 @@ function detail(msg) {
   if (!term) return;
   for (const line of String(msg).split(/\r?\n/)) term.writeln(`               \x1b[31m${line}\x1b[0m`);
 }
-function info(msg) {
-  if (!term) return;
-  for (const line of String(msg).split(/\r?\n/)) term.writeln(`               \x1b[90m${line}\x1b[0m`);
-}
 
 let sysStatus = "";
 function setStatus(s) { sysStatus = s; if (els.status) els.status.textContent = s; renderSysinfo(); }
@@ -345,10 +341,6 @@ async function gh(path, opts = {}) {
   return r.status === 204 ? {} : r.json();
 }
 
-function stateTopic(_state) {
-  return "Waiting for codespace to start";
-}
-
 const CS_STOPPED = new Set(["Shutdown", "Unavailable"]);
 // Poll until the codespace is Available. Codespaces commonly bounce
 // (Shutdown -> Starting -> Shutdown) on a cold start before they hold, so we stay
@@ -356,19 +348,15 @@ const CS_STOPPED = new Set(["Shutdown", "Unavailable"]);
 // fallback. If it settles back into a stopped state we nudge it with a fresh
 // /start (throttled) — that fresh attempt is what a manual reconnect does and
 // what usually succeeds. We only give up on a terminal state or the overall
-// timeout.
+// timeout. The single "Starting codespace" step (from launch) keeps spinning
+// throughout; we don't split the wait into extra steps or surface raw states.
 async function poll(name, want = "Available", tries = 90, delayMs = 2000) {
   const guide =
     "usually a Codespaces spending limit, an unavailable machine type, or a platform issue.\n" +
     "open github.com/codespaces to start it manually and see the reason, or delete it and reconnect.";
-  let shown = "", lastStartAt = performance.now(); // launch() just issued a /start
+  let lastStartAt = performance.now(); // launch() just issued a /start
   for (let i = 0; i < tries; i++) {
     const cs = await gh(`/user/codespaces/${encodeURIComponent(name)}`);
-    if (cs.state !== shown) {
-      shown = cs.state;
-      setStatus(`${cs.state} …`);
-      if (cs.state !== want) stepStart(stateTopic(cs.state));
-    }
     if (cs.state === want) return cs;
     if (cs.state === "Failed" || cs.state === "Deleted") throw new Error(`codespace reported ${cs.state}.\n${guide}`);
     // Fell back to a stopped state: nudge it again, but not more than every ~15s.
@@ -410,8 +398,7 @@ async function launch(owner, repo) {
     // 422) instead of silently polling a Shutdown codespace until timeout.
     if (cs.state === "Shutdown" || cs.state === "Unavailable" || cs.state === "ShuttingDown") {
       try {
-        const r = await gh(`/user/codespaces/${encodeURIComponent(cs.name)}/start`, { method: "POST" });
-        if (r && r.state) info(`start acknowledged — codespace reports: ${r.state}`);
+        await gh(`/user/codespaces/${encodeURIComponent(cs.name)}/start`, { method: "POST" });
       } catch (e) {
         const msg = String(e).replace(/^Error:\s*/, "");
         if (!/\b409\b/.test(msg)) { // 409 = already starting, benign
