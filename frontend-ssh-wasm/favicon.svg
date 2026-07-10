@@ -1,0 +1,13 @@
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Spacehatch">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#141a24"/><stop offset="1" stop-color="#0a0d12"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#bg)" stroke="#2a3446" stroke-width="1.5"/>
+  <path d="M11 21 h-3 v22 h3" fill="none" stroke="#729fcf" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M14 26 l5 6 l-5 6" fill="none" stroke="#4e9a06" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M53 21 h3 v22 h-3" fill="none" stroke="#729fcf" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M50 26 l-5 6 l5 6" fill="none" stroke="#4e9a06" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="32" y="41" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="23" font-weight="800" text-anchor="middle" fill="#e6e9ef" letter-spacing="-0.5">SH</text>
+</svg>
