@@ -211,7 +211,7 @@ function setStatus(s) { if (els.status) els.status.textContent = s; renderSysinf
 // The clock is local and ticks every second; the status is push-driven — the Go
 // transport reports it via onStatus (relayed through setStatus), so no polling is
 // needed for it. GitHub exposes no push/subscribe for the codespace state itself.
-let csName = "", sysTimer = 0;
+let csName = "", sysTimer = 0, sysResizeBound = false;
 const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 function sysStatusColor(s) {
   if (/connected/i.test(s)) return "#6ac26a";
@@ -220,10 +220,12 @@ function sysStatusColor(s) {
   return "#6a7080";
 }
 const rttColor = (v) => (v <= 80 ? "#6ac26a" : v <= 200 ? "#e0b341" : "#e06c6c");
+function clockStr() {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
 function renderSysinfo() {
   if (!els.sysinfo) return;
-  const d = new Date();
-  const clock = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
   const status = ((els.status && els.status.textContent) || "").trim();
   const owner = els.owner.value.trim() || "EliSofke", repo = els.repo.value.trim() || "Spacehatch";
   const col = sysStatusColor(status || "idle");
@@ -234,18 +236,23 @@ function renderSysinfo() {
   if (/connected/i.test(status)) verb = "connected";
   else if (/fail|error/i.test(status)) verb = "couldn't connect";
 
-  // Target reads codespace@owner/repo; each object links to its GitHub page.
   const ownerUrl = `https://github.com/${encodeURIComponent(owner)}`;
   const repoUrl = `${ownerUrl}/${encodeURIComponent(repo)}`;
-  const cs = csName ? A(`https://github.com/codespaces/${encodeURIComponent(csName)}`, csName) + "@" : "";
-  const target = cs + A(ownerUrl, owner) + "/" + A(repoUrl, repo);
+  // The codespace name (a link) is the only part that shortens on narrow screens;
+  // the "@owner/repo" tail stays intact. fitCodespace() trims it in JS so we can
+  // append a literal "..." right before the "@" — CSS text-overflow can do neither
+  // (it clips at the end and renders a Unicode ellipsis).
+  const csHtml = csName
+    ? `<a class="cs" data-full="${esc(csName)}" href="https://github.com/codespaces/${encodeURIComponent(csName)}" target="_blank" rel="noopener">${esc(csName)}</a>@`
+    : "";
+  const target = csHtml + A(ownerUrl, owner) + "/" + A(repoUrl, repo);
   const sh = `[&gt; ${A(repoUrl, "SH")} &lt;]`;
 
   const rtt = Math.round(rttAvg);
   const rttHtml = rtt > 0 ? `<span style="color:${rttColor(rtt)}">${rtt} ms</span>` : "—";
 
   // Only the verb and the RTT are coloured; everything else is plain text.
-  const left = `${clock} ${sh} <span style="color:${col}">${esc(verb)}</span>`;
+  const left = `<span class="clk">${clockStr()}</span> ${sh} <span style="color:${col}">${esc(verb)}</span>`;
   const mid = `to ${target}`;
   const right = `⇄ ${rttHtml}`;
 
@@ -254,6 +261,38 @@ function renderSysinfo() {
     `<span class="grp mid">${mid}</span>` +
     `<span class="grp right">${right}</span>` +
     `<span class="tail"></span>`;
+  fitCodespace();
+}
+// Shorten the codespace name (only) until the middle group stops overflowing,
+// appending a literal "..." before the "@". Binary search over the prefix length.
+function fitCodespace() {
+  if (!els.sysinfo) return;
+  const bar = els.sysinfo;
+  const cs = bar.querySelector(".cs");
+  if (!cs) return;
+  const full = cs.dataset.full || cs.textContent;
+  cs.textContent = full;
+  if (bar.scrollWidth <= bar.clientWidth) return; // whole bar fits at full length
+  let lo = 0, hi = full.length;
+  while (lo < hi) {
+    const n = Math.ceil((lo + hi) / 2);
+    cs.textContent = full.slice(0, n) + "...";
+    if (bar.scrollWidth <= bar.clientWidth) lo = n; else hi = n - 1;
+  }
+  cs.textContent = full.slice(0, lo) + "...";
+}
+function tickClock() {
+  const c = els.sysinfo && els.sysinfo.querySelector(".clk");
+  if (c) c.textContent = clockStr();
+}
+function startSysinfo() {
+  loadVersion().then(renderSysinfo).catch(() => {});
+  renderSysinfo();
+  if (!sysTimer) sysTimer = window.setInterval(tickClock, 1000);
+  if (!sysResizeBound) {
+    sysResizeBound = true;
+    window.addEventListener("resize", () => requestAnimationFrame(fitCodespace));
+  }
 }
 function startSysinfo() {
   loadVersion().then(renderSysinfo).catch(() => {});
