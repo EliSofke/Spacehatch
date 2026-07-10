@@ -1,6 +1,4 @@
 <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Spacehatch">
-  <defs><linearGradient id="chip" x1="0" y1="0" x2="1" y2="1">
-    <stop offset="0" stop-color="#8fb8e8"/><stop offset="1" stop-color="#5b86c4"/></linearGradient></defs>
-  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#chip)"/>
-  <text x="32" y="46" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="40" font-weight="800" text-anchor="middle" fill="#0b0e14" letter-spacing="-2">SH</text>
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="#0b0e14" stroke="#2a3446" stroke-width="1.5"/>
+  <text x="32" y="46" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="40" font-weight="800" text-anchor="middle" fill="#ffffff" letter-spacing="-2">SH</text>
 </svg>
