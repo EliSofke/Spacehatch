@@ -100,7 +100,7 @@ func TestShellEchoOverPipe(t *testing.T) {
 	var out bytes.Buffer
 	onData := func(b []byte) { mu.Lock(); out.Write(b); mu.Unlock() }
 
-	sh, err := Open(cli, "vscode", key, 80, 24, onData)
+	sh, err := Open(cli, "vscode", key, 80, 24, onData, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

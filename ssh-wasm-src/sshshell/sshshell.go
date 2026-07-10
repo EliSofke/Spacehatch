@@ -47,6 +47,10 @@ type Shell struct {
 	client  *ssh.Client
 	session *ssh.Session
 	stdin   io.WriteCloser
+	// closing is set by Close() before we tear the session down, so the
+	// session.Wait() monitor can tell our own teardown from a server-side end.
+	// WASM is single-threaded, so a plain bool needs no synchronisation here.
+	closing bool
 }
 
 type cbWriter struct{ onData func([]byte) }
@@ -59,8 +63,11 @@ func (w cbWriter) Write(p []byte) (int, error) {
 }
 
 // Open runs an SSH client over conn: authenticate as user with key, request a
-// pty (cols x rows), start a shell, and stream stdout/stderr to onData.
-func Open(conn net.Conn, user string, key *Key, cols, rows int, onData func([]byte)) (*Shell, error) {
+// pty (cols x rows), start a shell, and stream stdout/stderr to onData. onEnd,
+// if non-nil, is called once when the interactive shell/channel ends and it was
+// not our own Close() — this catches a server-side idle-shell timeout, which the
+// connection-level keepalive cannot see.
+func Open(conn net.Conn, user string, key *Key, cols, rows int, onData func([]byte), onEnd func(error)) (*Shell, error) {
 	cfg := &ssh.ClientConfig{
 		User:            user,
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(key.Signer)},
@@ -100,7 +107,16 @@ func Open(conn net.Conn, user string, key *Key, cols, rows int, onData func([]by
 		return nil, fmt.Errorf("shell: %w", err)
 	}
 
-	return &Shell{client: client, session: session, stdin: stdin}, nil
+	sh := &Shell{client: client, session: session, stdin: stdin}
+	if onEnd != nil {
+		go func() {
+			err := session.Wait() // returns when the shell/channel closes
+			if !sh.closing {
+				onEnd(err)
+			}
+		}()
+	}
+	return sh, nil
 }
 
 // Write sends input bytes to the remote shell.
@@ -131,6 +147,7 @@ func (s *Shell) Ping() (time.Duration, error) {
 
 // Close tears down the session and connection.
 func (s *Shell) Close() error {
+	s.closing = true
 	if s.session != nil {
 		s.session.Close()
 	}

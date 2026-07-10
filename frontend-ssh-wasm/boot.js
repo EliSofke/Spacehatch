@@ -609,7 +609,7 @@ async function connect() {
         else if (/connected\s*$/.test(s) && stepActive) stepOK();
       },
       onRtt: (stage, ms) => showRtt(stage, ms),
-      onClosed: () => handleDisconnect("ssh keepalive stopped", sessGen),
+      onClosed: (r) => handleDisconnect(r ? "ssh: " + String(r) : "connection closed", sessGen),
       workerUrl: WORKER_URL,
       cluster: tp.clusterId,
       tunnelId: tp.tunnelId,

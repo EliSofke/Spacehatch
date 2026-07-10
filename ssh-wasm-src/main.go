@@ -57,17 +57,19 @@ func connect(this js.Value, args []js.Value) any {
 			onStatus.Invoke(s)
 		}
 	}
-	// notifyClosed tells JS the transport is gone (e.g. the relay dropped an idle
-	// connection) so the UI can stop showing a stale "connected" and reconnect.
-	// Invoked at most once, from the keepalive loop when a ping errors.
+	// notifyClosed tells JS the interactive session is gone — either the SSH
+	// transport died (keepalive errored) or the shell channel ended while the
+	// connection stayed alive (a server-side idle-shell timeout: the
+	// connection-level keepalive keeps succeeding, so Wait() is the only signal).
+	// Invoked at most once; carries a short reason for the UI.
 	closedOnce := false
-	notifyClosed := func() {
+	notifyClosed := func(reason string) {
 		if closedOnce {
 			return
 		}
 		closedOnce = true
 		if onClosed.Type() == js.TypeFunction {
-			onClosed.Invoke()
+			onClosed.Invoke(reason)
 		}
 	}
 	// emitRtt reports a measured round-trip time (milliseconds, sub-ms precision)
@@ -84,7 +86,7 @@ func connect(this js.Value, args []js.Value) any {
 	handler := js.FuncOf(func(this js.Value, pa []js.Value) any {
 		resolve, reject := pa[0], pa[1]
 		go func() {
-			shell, err := run(opts, br, onData, status)
+			shell, err := run(opts, br, onData, status, notifyClosed)
 			if err != nil {
 				reject.Invoke(err.Error())
 				return
@@ -117,7 +119,7 @@ func connect(this js.Value, args []js.Value) any {
 					time.Sleep(2 * time.Second)
 					d, err := shell.Ping()
 					if err != nil {
-						notifyClosed()
+						notifyClosed("keepalive stopped")
 						return
 					}
 					emitRtt("ssh", d)
@@ -140,7 +142,7 @@ func connect(this js.Value, args []js.Value) any {
 	return map[string]any{"push": push, "promise": promise}
 }
 
-func run(opts js.Value, br *bridge.Conn, onData js.Value, status func(string)) (*sshshell.Shell, error) {
+func run(opts js.Value, br *bridge.Conn, onData js.Value, status func(string), notifyClosed func(string)) (*sshshell.Shell, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	logger := log.New(io.Discard, "", 0)
@@ -205,7 +207,9 @@ func run(opts js.Value, br *bridge.Conn, onData js.Value, status func(string)) (
 	if v := opts.Get("rows"); v.Type() == js.TypeNumber {
 		rows = v.Int()
 	}
-	shell, err := sshshell.Open(sshConn, user, key, cols, rows, cb)
+	shell, err := sshshell.Open(sshConn, user, key, cols, rows, cb, func(error) {
+		notifyClosed("shell session ended")
+	})
 	if err != nil {
 		return nil, err
 	}
