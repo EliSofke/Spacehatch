@@ -344,30 +344,32 @@ function stateTopic(_state) {
   return "Waiting for codespace to start";
 }
 
-const CS_PROGRESSING = new Set([
-  "Starting", "Provisioning", "Queued", "Awaiting", "Created", "Updating", "Rebuilding", "Exporting",
-]);
-async function poll(name, want = "Available", tries = 120, delayMs = 2000) {
+const CS_STOPPED = new Set(["Shutdown", "Unavailable"]);
+// Poll until the codespace is Available. Codespaces commonly bounce
+// (Shutdown -> Starting -> Shutdown) on a cold start before they hold, so we stay
+// patient and keep monitoring the transition rather than giving up on the first
+// fallback. If it settles back into a stopped state we nudge it with a fresh
+// /start (throttled) — that fresh attempt is what a manual reconnect does and
+// what usually succeeds. We only give up on a terminal state or the overall
+// timeout.
+async function poll(name, want = "Available", tries = 90, delayMs = 2000) {
   const guide =
     "usually a Codespaces spending limit, an unavailable machine type, or a platform issue.\n" +
     "open github.com/codespaces to start it manually and see the reason, or delete it and reconnect.";
-  let shown = "", unchanged = 0, sawProgress = false;
+  let shown = "", lastStartAt = performance.now(); // launch() just issued a /start
   for (let i = 0; i < tries; i++) {
     const cs = await gh(`/user/codespaces/${encodeURIComponent(name)}`);
     if (cs.state !== shown) {
-      shown = cs.state; unchanged = 0;
+      shown = cs.state;
       setStatus(`${cs.state} …`);
       if (cs.state !== want) stepStart(stateTopic(cs.state));
-    } else {
-      unchanged++;
     }
-    if (CS_PROGRESSING.has(cs.state)) sawProgress = true;
     if (cs.state === want) return cs;
     if (cs.state === "Failed" || cs.state === "Deleted") throw new Error(`codespace reported ${cs.state}.\n${guide}`);
-    // Stopped state that either never moved (30s) or was reached again after the
-    // codespace had started — the start did not hold. Fail fast with guidance.
-    if ((cs.state === "Shutdown" || cs.state === "Unavailable") && (sawProgress || unchanged * delayMs >= 30000)) {
-      throw new Error(`codespace fell back to ${cs.state} — the start didn't take effect.\n${guide}`);
+    // Fell back to a stopped state: nudge it again, but not more than every ~15s.
+    if (CS_STOPPED.has(cs.state) && performance.now() - lastStartAt > 15000) {
+      lastStartAt = performance.now();
+      try { await gh(`/user/codespaces/${encodeURIComponent(name)}/start`, { method: "POST" }); } catch (_) { /* keep polling */ }
     }
     await new Promise((r) => setTimeout(r, delayMs));
   }
