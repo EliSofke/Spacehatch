@@ -15,8 +15,10 @@
     button:disabled { opacity: .5; cursor: default; }
     #term { flex: 1 1 auto; min-height: 0; padding: 6px 2px 4px; display: flex; justify-content: center; }
     #sysinfo { display: flex; align-items: center; font: 18px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 3px 16px; letter-spacing: .3px; overflow: hidden; border-top: 1px solid #161b26; }
-    #sysinfo > .grp { white-space: nowrap; flex: 0 0 auto; }
-    #sysinfo .fill { flex: 1 1 auto; min-width: 24px; height: 0; margin: 0 12px; border-top: 1px dashed #2a3350; }
+    #sysinfo > .grp { white-space: nowrap; }
+    #sysinfo > .left { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    #sysinfo > .right { flex: 0 0 auto; }
+    #sysinfo .fill { flex: 1 0 8px; }
     #sysinfo a { text-decoration: none; }
     #sysinfo a:hover { text-decoration: underline; }
     #sysinfo:empty { display: none; }

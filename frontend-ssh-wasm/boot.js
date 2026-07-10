@@ -250,7 +250,7 @@ function renderSysinfo() {
     + (target ? " " + target : "");
   const right = `<span style="color:${CY}">${clock}</span> ` + dim("&lt;]");
 
-  els.sysinfo.innerHTML = `<span class="grp">${left}</span><span class="fill"></span><span class="grp">${right}</span>`;
+  els.sysinfo.innerHTML = `<span class="grp left">${left}</span><span class="fill"></span><span class="grp right">${right}</span>`;
 }
 function startSysinfo() {
   loadVersion().then(renderSysinfo).catch(() => {});
